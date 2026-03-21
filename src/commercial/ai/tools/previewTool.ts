@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { PreviewBridge } from "@mermaid-chart/vscode-utils";
+import { PreviewBridge } from "../../../stubs/vscode-utils";
 import { PreviewPanel } from "../../../panels/previewPanel";
 
 export class PreviewBridgeImpl implements PreviewBridge {

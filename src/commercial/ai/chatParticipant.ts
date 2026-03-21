@@ -1,4 +1,4 @@
-import { aiHandler } from "@mermaid-chart/vscode-utils";
+import { aiHandler } from "../../stubs/vscode-utils";
 import * as vscode from "vscode";
 
 export function initializeAIChatParticipant(context: vscode.ExtensionContext): vscode.ChatParticipant {

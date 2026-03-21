@@ -1,5 +1,4 @@
-import { MermaidChartAuthenticationProvider } from "./mermaidChartAuthenticationProvider";
-import { Disposable, Event, EventEmitter, authentication } from "vscode";
+import { Disposable, Event, EventEmitter } from "vscode";
 import { createHash } from "crypto";
 import * as vscode from "vscode";
 import { MermaidChartVSCode } from "./mermaidChartVSCode";
@@ -224,92 +223,24 @@ export function getImageDataURL(svgXml: string) {
 
 
 export async function ensureAuthenticated(): Promise<boolean> {
-  const session = await vscode.authentication.getSession(
-    MermaidChartAuthenticationProvider.id,
-    [],
-    { silent: true }
-  );
-
-  if (!session) {
-    const selection = await vscode.window.showInformationMessage(
-      "You need to be logged in to perform this action.",
-      "Login"
-    );
-    if (selection === "Login") {
-      vscode.commands.executeCommand("mermaidChart.login");
-    }
-    return false;
-  }
+  // Authentication disabled for local-only mode
   return true;
 }
 
 export async function viewMermaidChart(
-  mcAPI: MermaidChartVSCode,
+  _mcAPI: MermaidChartVSCode,
   uuid: string
 ) {
-  if (!(await ensureAuthenticated())) {
-    return;
-  }
-  const panel = vscode.window.createWebviewPanel(
-    "mermaidChartView",
-    `Mermaid Chart: ${uuid}`,
-    vscode.ViewColumn.One,
-    {}
-  );
-
-  const isDarkTheme =
-    vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark; //ColorTheme.Light;
-  // Choose the appropriate URL based on the current theme
-  const themeParameter = isDarkTheme ? "dark" : "light";
-  const svgContent = await mcAPI.getRawDocument(
-    {
-      documentID: uuid,
-      major: 0,
-      minor: 1,
-    },
-    themeParameter
-  );
-
-  panel.webview.html = `
-    <!DOCTYPE html>
-    <html lang="en" style="height: 100%;">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    </head>
-    <body style="height: 100%; margin: 0; padding: 0; overflow: hidden;">
-        <iframe sandbox="allow-same-origin allow-forms allow-popups allow-pointer-lock allow-top-navigation-by-user-activation" src="${getImageDataURL(
-          svgContent
-        )}" style="width: 100%; height: 100%; border: none;"></iframe>
-    </body>
-    </html>`;
+  // Remote view disabled for local-only mode
+  vscode.window.showInformationMessage(`Viewing remote diagrams is not available in local-only mode. Diagram UUID: ${uuid}`);
 }
 export async function editMermaidChart(
-  mcAPI: MermaidChartVSCode,
+  _mcAPI: MermaidChartVSCode,
   uuid: string,
-  provider: MermaidChartProvider
+  _provider: MermaidChartProvider
 ) {
-  if (!(await ensureAuthenticated())) {
-    return;
-  }
-  // Retrieve the document details to get the required fields
-  const document = await mcAPI.getDocument({ documentID: uuid });
-
-  if (!document || !document.projectID) {
-    vscode.window.showErrorMessage(
-      "Document details not found. Unable to edit the chart."
-    );
-    return;
-  }
-
-  const editUrl = await mcAPI.getEditURL({
-    documentID: document.documentID,
-    major: document.major,
-    minor: document.minor,
-    projectID: document.projectID,
-  });
-
-  vscode.env.openExternal(vscode.Uri.parse(editUrl));
+  // Remote edit disabled for local-only mode
+  vscode.window.showInformationMessage(`Editing remote diagrams is not available in local-only mode. Diagram UUID: ${uuid}`);
 }
 
 export async function insertMermaidChartToken(

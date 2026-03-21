@@ -1,5 +1,5 @@
-import layouts from '@mermaid-chart/layout-elk';
-import mermaid, { MermaidConfig } from '@mermaid-chart/mermaid';
+import layouts from '@mermaid-js/layout-elk';
+import mermaid, { MermaidConfig } from 'mermaid';
 
 
 
@@ -73,18 +73,6 @@ export async function registerMermaidAddons() {
         {
           name: 'fa',
           loader: () => import('@iconify-json/fa6-regular').then((m) => m.icons),
-        },
-        {
-          name: 'aws',
-          loader: () => import('@mermaid-chart/icons-aws').then((m) => m.icons),
-        },
-        {
-          name: 'azure',
-          loader: () => import('@mermaid-chart/icons-azure').then((m) => m.icons),
-        },
-        {
-          name: 'gcp',
-          loader: () => import('@mermaid-chart/icons-gcp').then((m) => m.icons),
         },
         {
             name: 'logos',

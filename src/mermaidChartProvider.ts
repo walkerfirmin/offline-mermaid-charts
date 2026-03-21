@@ -262,23 +262,9 @@ export class MermaidChartProvider
   }
 
   public async syncMermaidChart(): Promise<MCTreeItem[]> {
-    try {
-      MermaidChartProvider.isSyncing = true;
-      return await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: "Mermaid Chart",
-        cancellable: false
-      }, async (progress) => {
-        progress.report({ message: "Syncing diagrams from Mermaid..." });
-        const projects = await this.fetchAndProcessProjects();
-        this._onDidChangeTreeData.fire();
-        MermaidChartProvider.isSyncing = false;
-        return projects;
-      });
-    } finally {
-      MermaidChartProvider.isSyncing = false;
-      console.log('ending MermaidChartProvider.isSyncing', MermaidChartProvider.isSyncing);
-    }
+    // Remote sync disabled for local-only mode
+    MermaidChartProvider.isSyncing = false;
+    return [];
   }
 
   private async fetchAndProcessProjects(): Promise<MCTreeItem[]> {

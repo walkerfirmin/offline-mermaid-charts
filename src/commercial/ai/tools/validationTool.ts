@@ -1,4 +1,4 @@
-import { ValidationBridge } from '@mermaid-chart/vscode-utils';
+import { ValidationBridge } from '../../../stubs/vscode-utils';
 import * as vscode from 'vscode';
 import { getWebviewHTML } from '../../../templates/previewTemplate';
 import * as packageJson from '../../../../package.json';

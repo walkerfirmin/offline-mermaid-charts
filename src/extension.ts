@@ -43,7 +43,7 @@ import {
   setValidationBridge,
   setDiagramDiffBridge,
   initializePlugin,
-} from "@mermaid-chart/vscode-utils";;
+} from "./stubs/vscode-utils";
 import { PreviewBridgeImpl } from "./commercial/ai/tools/previewTool";
 import { ValidationBridgeImpl } from "./commercial/ai/tools/validationTool";
 import { openDiagramDiffWebviews } from "./commercial/sync/diagramDiffView";
@@ -104,8 +104,6 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  const isUserLoggedIn = context.globalState.get<boolean>("isUserLoggedIn", false);
-
   const mermaidChartProvider: MermaidChartProvider = new MermaidChartProvider(
     mcAPI
   );
@@ -116,12 +114,13 @@ export async function activate(context: vscode.ExtensionContext) {
   DiagramManager.registerCommands(context, mcAPI, mermaidChartProvider);
 
 
-  
+
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("mermaidWebview", mermaidWebviewProvider)
   );
-  
-  updateViewVisibility(isUserLoggedIn, mermaidWebviewProvider, mermaidChartProvider);
+
+  // Always show chart view in local-only mode (skip login requirement)
+  updateViewVisibility(true, mermaidWebviewProvider, mermaidChartProvider);
 
   context.subscriptions.push(
     vscode.commands.registerCommand('mermaidChart.preview', getPreview)
@@ -375,41 +374,8 @@ context.subscriptions.push(
 );
 
 vscode.workspace.onWillSaveTextDocument(async (event) => {
-  if (event.reason !== vscode.TextDocumentSaveReason.Manual) {
-    if (event.document.languageId.startsWith("mermaid")) {
-      return;
-    }
-  }
-  if (event.document.languageId.startsWith("mermaid")) {
-    const content = event.document.getText();
-    const diagramId = extractIdFromCode(content);
-    if (diagramId) {
-      const projectId = getProjectIdForDocument(diagramId);
-
-      if (projectId) {
-
-      const syncDecision = await remoteSyncHandler.handleRemoteChanges(
-        event.document,
-          diagramId
-      );
-
-      if (syncDecision === 'abort') {
-          // vscode.window.showInformationMessage('Sync cancelled');
-          return;
-      }
-      // Proceed with saving
-      await mcAPI.setDocument({
-        documentID: diagramId,
-        projectID: projectId,
-        code: content,
-      });
-
-      // Update the cache with the new code immediately after successful save
-      updateDiagramInCache(diagramId, content);
-      vscode.window.showInformationMessage(`Diagram synced successfully with Mermaid chart. Diagram ID: ${diagramId}`);
-      }
-    }
-  }
+  // Remote sync on save disabled for local-only mode - files save locally only
+  return;
 });
 
   context.subscriptions.push(

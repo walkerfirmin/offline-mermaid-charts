@@ -110,21 +110,7 @@ export class PreviewPanel {
   }
 
   private async fetchAICredits(): Promise<{remaining: number, total: number} | null> {
-    try {
-      // Return cached credits if available
-      if (this.creditsFetched && this.cachedAICredits) {
-        return this.cachedAICredits;
-      }
-
-      if (PreviewPanel.mcAPI) {
-        const response = await PreviewPanel.mcAPI.getAICredits();
-        this.cachedAICredits = response.aiCredits;
-        this.creditsFetched = true;
-        return this.cachedAICredits;
-      }
-    } catch (error) {
-      console.log("Failed to fetch AI credits:", error);
-    }
+    // AI credits disabled for local-only mode
     return null;
   }
 

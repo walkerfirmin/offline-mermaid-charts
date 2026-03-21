@@ -1,8 +1,8 @@
 <script lang="ts">
-  import mermaid from '@mermaid-chart/mermaid';
+  import mermaid from 'mermaid';
   import Panzoom from '@panzoom/panzoom';
   import { onMount } from 'svelte';
-  import layouts from '@mermaid-chart/layout-elk';
+  import layouts from '@mermaid-js/layout-elk';
   import { vscode } from './utility/vscode'
   import ErrorMessage from './ErrorMessage.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -71,18 +71,6 @@
           {
             name: 'fa',
             loader: () => import('@iconify-json/fa6-regular').then((m) => m.icons),
-          },
-          {
-            name: 'aws',
-            loader: () => import('@mermaid-chart/icons-aws').then((m) => m.icons),
-          },
-          {
-            name: 'azure',
-            loader: () => import('@mermaid-chart/icons-azure').then((m) => m.icons),
-          },
-          {
-            name: 'gcp',
-            loader: () => import('@mermaid-chart/icons-gcp').then((m) => m.icons),
           },
           {
             name: 'logos',

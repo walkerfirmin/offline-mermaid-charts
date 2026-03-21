@@ -1,23 +1,8 @@
-import httpClient from './httpClient';
-import * as vscode from "vscode";
-import * as packageJson from '../package.json';
 class Analytics {
 
-  public sendEvent(eventName: string, eventID:string, errorMessage?: string, diagramType?:string) {
-    const analyticsID = vscode.env.machineId;
-    const pluginID= packageJson.name === "vscode-mermaid-chart" ?  "MERMAIDCHART_VS_CODE_PLUGIN" : "MERMAID_PREVIEW_VS_CODE_PLUGIN";
-    const payload = {
-      analyticsID,
-      pluginID,
-      eventName,
-      eventID,
-      errorMessage,
-      diagramType
-    };
-
-    httpClient.post('/rest-api/plugins/pulse', payload).catch(error => {
-      console.error('Failed to send analytics event:', error);
-    });
+  public sendEvent(_eventName: string, _eventID:string, _errorMessage?: string, _diagramType?:string) {
+    // Analytics disabled for local-only mode
+    return;
   }
 
   public trackActivation() {

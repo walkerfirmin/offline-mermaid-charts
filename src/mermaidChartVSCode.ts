@@ -179,14 +179,10 @@ export class MermaidChartVSCode extends MermaidChart {
           } else {
             this.resetAccessToken();
           }
-  
-          if (!session) {
-            await context.globalState.update("isUserLoggedIn", false);
-            updateViewVisibility(false, mermaidWebviewProvider, this.mermaidChartProvider);
-          } else {
-            await context.globalState.update("isUserLoggedIn", true);
-            updateViewVisibility(true, mermaidWebviewProvider, this.mermaidChartProvider);
-          }
+
+          // Always show chart view in local-only mode regardless of session state
+          await context.globalState.update("isUserLoggedIn", true);
+          updateViewVisibility(true, mermaidWebviewProvider, this.mermaidChartProvider);
         }
       })
     );

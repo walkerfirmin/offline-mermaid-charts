@@ -26,7 +26,7 @@ module.exports = {
     mainFields: ['module', 'main'],
     alias: {
       // eslint-disable-next-line @typescript-eslint/naming-convention
-      '@mermaid-chart/layout-elk': path.resolve(__dirname, '../node_modules/@mermaid-chart/layout-elk/dist/mermaid-layout-elk.core.mjs')
+      '@mermaid-js/layout-elk': path.resolve(__dirname, '../node_modules/@mermaid-js/layout-elk/dist/mermaid-layout-elk.core.mjs')
     }
   },
   experiments: {
@@ -50,7 +50,7 @@ module.exports = {
             transpileOnly: true
           }
         }],
-        exclude: /node_modules\/(?!@mermaid-chart)/
+        exclude: /node_modules\/(?!@mermaid-js|mermaid)/
       },
       {
         test: /\.m?js/,
