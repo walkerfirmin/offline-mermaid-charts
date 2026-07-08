@@ -8,7 +8,7 @@
  * element mappings and exact SVG selectors for accurate highlighting.
  */
 
-import mermaid, { type MermaidConfig } from '@mermaid-chart/mermaid';
+import mermaid, { type MermaidConfig } from 'mermaid';
 import { splitFrontMatter } from '../../frontmatter';
 
 export type DiagramChangeKind = 'added' | 'modified' | 'removed';
@@ -109,7 +109,6 @@ function initializeMermaidWithAST(): void {
   // and FlowDB.sanitizeText throws. parseOnly skips DOMPurify while still parsing (we only need AST).
   const config: MermaidConfig = {
     startOnLoad: false,
-    securityLevel: "parseOnly",
     flowchart: { parser: "jison" } as MermaidConfig["flowchart"], // Jison for better text extraction
     sequence: { parser: "antlr" } as MermaidConfig["sequence"], // ANTLR for sequences
     maxTextSize: 90000,
@@ -125,12 +124,12 @@ async function parseWithAST(code: string, diagramType: string): Promise<DiagramA
     initializeMermaidWithAST();
     const res = await mermaid.parse(code);
     
-    if (!res?.diagram?.db) {
+    if (!(res as any)?.diagram?.db) {
       return undefined;
     }
     
     // Extract AST using collab's approach
-    const db = res.diagram.db as { getAST?: () => DiagramAST };
+    const db = (res as any).diagram.db as { getAST?: () => DiagramAST };
     if (typeof db.getAST === 'function') {
       return db.getAST();
     }

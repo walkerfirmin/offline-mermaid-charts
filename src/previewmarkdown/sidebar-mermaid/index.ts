@@ -1,4 +1,4 @@
-import mermaid from "@mermaid-chart/mermaid";
+import mermaid from "mermaid";
 
 interface SidebarMermaid {
   render(code: string, id: string): Promise<string>;

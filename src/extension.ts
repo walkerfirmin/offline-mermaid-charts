@@ -165,6 +165,17 @@ export async function activate(context: vscode.ExtensionContext) {
   // Always show chart view in local-only mode (skip login requirement)
   updateViewVisibility(true, mermaidWebviewProvider, mermaidChartProvider);
 
+  const diffProvider = new DiagramImprovementDiffProvider();
+  context.subscriptions.push(diffProvider);
+
+  const diagramImprovementPanel = new DiagramImprovementPanel(context.extensionUri, diffProvider, context);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      DiagramImprovementPanel.viewType,
+      diagramImprovementPanel
+    )
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand('mermaidChart.preview', getPreview)
   );

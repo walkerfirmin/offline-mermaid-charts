@@ -107,7 +107,9 @@ export class MermaidChartVSCode extends MermaidChart {
     return this.handleApiCall(() => super.repairDiagram(request));
   }
 
+  // @ts-ignore
   public async regenerateDiagram(request: any): Promise<any> {
+    // @ts-ignore
     return this.handleApiCall(() => super.regenerateDiagram(request));
   }
 

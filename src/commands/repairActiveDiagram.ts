@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import mermaid, { type MermaidConfig } from "@mermaid-chart/mermaid";
+import mermaid, { type MermaidConfig } from "mermaid";
 import { RepairDiagram } from "../panels/repairDiagram";
 import { canOpenMermaidPreview, ensureAuthenticated, getActiveOrOpenMermaidDocument } from "../util";
 
@@ -24,7 +24,6 @@ export async function repairActiveDiagram(): Promise<void> {
   try {
     mermaid.initialize({
       startOnLoad: false,
-      securityLevel: "parseOnly",
       flowchart: { parser: "jison" },
       sequence: { parser: "antlr" },
       maxTextSize: 90000,
