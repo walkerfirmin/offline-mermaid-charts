@@ -7,9 +7,10 @@ import { saveDiagramAsPng, saveDiagramAsSvg } from "../services/renderService";
 import { MermaidChartVSCode } from "../mermaidChartVSCode";
 import { RepairDiagram } from "./repairDiagram";
 import { MermaidChartAuthenticationProvider } from "../mermaidChartAuthenticationProvider";
+import { getThemeColors } from "../../webview/src/themes/themeConfig";
 const DARK_THEME_KEY = "mermaid.vscode.dark";
 const LIGHT_THEME_KEY = "mermaid.vscode.light";
-const MAX_ZOOM= "mermaid.vscode.maxZoom";
+const MAX_ZOOM = "mermaid.vscode.maxZoom";
 const MAX_CHAR_LENGTH = "mermaid.vscode.maxCharLength";
 const MAX_EDGES = "mermaid.vscode.maxEdges";
 
@@ -23,10 +24,11 @@ export class PreviewPanel {
   private isFileChange = false;
   private readonly diagnosticsCollection: vscode.DiagnosticCollection;
   private lastContent: string = "";
-  
-  // Simple per-preview-panel caching
-  private cachedAICredits: {remaining: number, total: number} | null = null;
-  private creditsFetched: boolean = false;
+
+  private cachedAICredits: { remaining: number, total: number } | null = null;
+  private creditsFetched = false;
+  private authKnown = false;
+  private isUserAuthenticated = false;
 
   // Use shared decoration manager
 
@@ -47,6 +49,24 @@ export class PreviewPanel {
     RepairDiagram.setMcAPI(mcAPI);
   }
 
+  public static getMcAPI(): MermaidChartVSCode | undefined {
+    return PreviewPanel.mcAPI;
+  }
+
+  /** Auth snapshot for diff previews — only when this panel has already resolved auth. */
+  public static peekAuthState():
+    | { aiCredits: { remaining: number; total: number } | null; isAuthenticated: boolean }
+    | undefined {
+    const panel = PreviewPanel.currentPanel;
+    if (!panel?.authKnown) {
+      return undefined;
+    }
+    return {
+      aiCredits: panel.cachedAICredits,
+      isAuthenticated: panel.isUserAuthenticated,
+    };
+  }
+
   public static createOrShow(document: vscode.TextDocument) {
     if (PreviewPanel.currentPanel) {
       PreviewPanel.currentPanel.panel.reveal();
@@ -62,19 +82,21 @@ export class PreviewPanel {
     PreviewPanel.currentPanel = new PreviewPanel(panel, document);
   }
 
-  private update() {
+  private async update() {
     const extensionPath = vscode.extensions.getExtension(`${packageJson.publisher}.${packageJson.name}`)?.extensionPath;
     const activeEditor = vscode.window.activeTextEditor;
-    
+
     if (!extensionPath) {
       throw new Error("Unable to resolve the extension path");
     }
-  
+
     // Get the current active theme (dark or light)
     const isDarkTheme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
 
     // Fetch the configuration from VSCode workspace
     const config = vscode.workspace.getConfiguration();
+    const vscodeThemeName = config.get<string>("workbench.colorTheme", "Default Light+");
+    console.log(`VS Code theme: ${vscodeThemeName} (${isDarkTheme ? "dark" : "light"})`);
 
     // Get the theme settings from configuration
     const darkTheme = config.get<string>(DARK_THEME_KEY, "redux-dark");
@@ -85,31 +107,43 @@ export class PreviewPanel {
 
     // Determine the current theme based on the user's preference and the active color theme
     const currentTheme = isDarkTheme ? darkTheme : lightTheme;
-      this.lastContent = this.document.getText() || " ";
+    // Get VS Code theme colors using shared config
+    const vscodeThemeColors = getThemeColors(vscodeThemeName);
 
-// Initial content to be used (defaults to a single space if empty)
-    const initialContent = this.document.getText() || " ";
-  
+    console.log('Theme colors:', vscodeThemeColors);
+
+    this.lastContent = (this.document.getText() || " ").replace(/\r\n/g, '\n');
+
     if (!this.panel.webview.html) {
-      this.panel.webview.html = getWebviewHTML(this.panel, extensionPath, this.lastContent, currentTheme, false);
+      this.panel.webview.html = getWebviewHTML(this.panel, extensionPath, this.lastContent, currentTheme, false, {
+        maxZoom,
+        maxCharLength,
+        maxEdges,
+      });
       // Only fetch credits on initial panel creation
       this.fetchAndSendCredits();
     }
-    
-    this.panel.webview.postMessage({
+
+    const message: Record<string, unknown> = {
       type: "update",
-      content:this.lastContent,
-      currentTheme: currentTheme,
+      content: this.lastContent,
+      currentTheme,
+      vscodeThemeName,
+      vscodeThemeColors,
       isFileChange: this.isFileChange,
-      maxZoom: maxZoom,
-      maxCharLength: maxCharLength,
+      maxZoom,
+      maxCharLength,
       maxEdge: maxEdges,
-      aiCredits: this.cachedAICredits, // Always send cached credits if available
-    });
+    };
+    if (this.authKnown) {
+      message.isAuthenticated = this.isUserAuthenticated;
+      message.aiCredits = this.cachedAICredits;
+    }
+    this.panel.webview.postMessage(message);
     this.isFileChange = false;
   }
 
-  private async fetchAICredits(): Promise<{remaining: number, total: number} | null> {
+  private async fetchAICredits(): Promise<{ remaining: number, total: number } | null> {
     // AI credits disabled for local-only mode
     return null;
   }
@@ -118,7 +152,8 @@ export class PreviewPanel {
     const aiCredits = await this.fetchAICredits();
     this.panel.webview.postMessage({
       type: "aiCreditsUpdate",
-      aiCredits: aiCredits
+      aiCredits,
+      isAuthenticated: this.isUserAuthenticated,
     });
   }
 
@@ -140,16 +175,29 @@ export class PreviewPanel {
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor?.document?.languageId.startsWith('mermaid')) {
         if (editor.document.uri.toString() !== this.document?.uri.toString()) {
-          this.document = editor.document; 
-          this.isFileChange = true; 
+          this.document = editor.document;
+          this.isFileChange = true;
           debouncedUpdate();
         }
-      } 
+      }
     }, this.disposables);
 
     vscode.window.onDidChangeActiveColorTheme(() => {
-      this.update(); 
-  }, this.disposables);
+      this.update();
+    }, this.disposables);
+
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        event.affectsConfiguration(DARK_THEME_KEY) ||
+        event.affectsConfiguration(LIGHT_THEME_KEY) ||
+        event.affectsConfiguration(MAX_ZOOM) ||
+        event.affectsConfiguration(MAX_CHAR_LENGTH) ||
+        event.affectsConfiguration(MAX_EDGES) ||
+        event.affectsConfiguration("workbench.colorTheme")
+      ) {
+        this.update();
+      }
+    }, this.disposables);
 
     this.panel.webview.onDidReceiveMessage(async (message) => {
       if (message.type === "error" && message.message) {
@@ -176,6 +224,18 @@ export class PreviewPanel {
         await this.handleRepairDiagram(message.code, message.errorMessage);
       } else if (message.type === "requestAICredits") {
         await this.fetchAndSendCredits();
+      } else if (message.type === "login") {
+        // Trigger OAuth login flow
+        try {
+          await vscode.commands.executeCommand('mermaidChart.login');
+          // Refresh authentication status and credits after login attempt
+          setTimeout(async () => {
+            await this.refreshAICredits();
+          }, 1000);
+        } catch (error) {
+          console.error("Error during login:", error);
+          vscode.window.showErrorMessage("Failed to initiate login. Please try again.");
+        }
       } else if (message.type === "openUrl" && message.url) {
         await vscode.env.openExternal(vscode.Uri.parse(message.url));
       } else if (message.type === "showWarning" && message.message) {
@@ -189,42 +249,42 @@ export class PreviewPanel {
   private handleDiagramError(errorMessage: string) {
     const diagnostics: vscode.Diagnostic[] = [];
     const errorDetails = this.getErrorLine(errorMessage);
-  
+
     if (errorDetails) {
       const caretPositionMatch = errorMessage.match(/(\^)/);
       const lineText = errorMessage.split("\n")[1].trim();
       const caretIndex = caretPositionMatch?.index ?? 0;
       const wordsBeforeCaret = lineText.substring(0, caretIndex).split(/\s+/);
       const wordsAfterCaret = lineText.substring(caretIndex + 1).split(/\s+/);
-  
+
       const startWord = wordsBeforeCaret[wordsBeforeCaret.length - 1];
       const endWord = wordsAfterCaret[0];
-  
+
       const startCharacter = lineText.indexOf(startWord);
       const endCharacter = lineText.indexOf(endWord) + endWord.length;
-  
+
       const range = new vscode.Range(
-        errorDetails.line, 
-        startCharacter, 
-        errorDetails.line, 
+        errorDetails.line,
+        startCharacter,
+        errorDetails.line,
         endCharacter
       );
-  
+
       const diagnostic = new vscode.Diagnostic(
         range,
         `Syntax error: ${errorDetails.message}`,
         vscode.DiagnosticSeverity.Error
       );
-      
+
       diagnostics.push(diagnostic);
     }
-  
+
     this.diagnosticsCollection.clear();
     this.diagnosticsCollection.set(this.document.uri, diagnostics);
   }
-  
+
   private getErrorLine(errorMessage: string): { line: number; message: string } | null {
-  
+
     const match = errorMessage.match(/line (\d+):\s*([\s\S]+)/i); // Case-insensitive match for "line <number>: <message>"
     if (match) {
       const line = parseInt(match[1], 10) - 1; // Convert to zero-based index

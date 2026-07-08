@@ -24,6 +24,11 @@ import {
   updateViewVisibility,
   viewMermaidChart,
 } from "./util";
+import { DiagramImprovementDiffProvider } from "./diagramImprovementDiffProvider";
+import { DiagramImprovementPanel } from "./panels/diagramImprovementPanel";
+import { clearDiagramImprovementCache } from "./services/diagramImprovementCache";
+import { registerLanguageModelExtensionContext } from "./services/vscodeLanguageModel";
+import { repairActiveDiagram } from "./commands/repairActiveDiagram";
 import { MermaidChartCodeLensProvider } from "./mermaidChartCodeLensProvider";
 import { createMermaidFile, getPreview, openMermaidPreview } from "./commands/createFile";
 import { handleTextDocumentChange } from "./eventHandlers";
@@ -36,6 +41,8 @@ import { MermaidWebviewProvider } from "./panels/loginPanel";
 import analytics from "./analytics";
 import { RemoteSyncHandler } from "./remoteSyncHandler";
 import { registerRegenerateCommand } from './commercial/sync/regenerateCommand';
+import { registerRegenerateWithMermaidAICommand } from './commercial/sync/regenerateWithMermaidAICommand';
+import { PreCommitSyncService } from './commercial/sync/preCommitSyncService';
 import { initializeAIChatParticipant } from "./commercial/ai/chatParticipant";
 import {
   setPreviewBridge,
@@ -46,41 +53,77 @@ import {
 } from "./stubs/vscode-utils";
 import { PreviewBridgeImpl } from "./commercial/ai/tools/previewTool";
 import { ValidationBridgeImpl } from "./commercial/ai/tools/validationTool";
-import { openDiagramDiffWebviews } from "./commercial/sync/diagramDiffView";
+import {
+  openDiagramDiffWebviews,
+  setReviewDiagramExtensionPath,
+} from "./commercial/sync/diagramDiffView";
 import { injectMermaidTheme } from "./previewmarkdown/themeing";
 import { extendMarkdownItWithMermaid } from "./previewmarkdown/shared-md-mermaid";
-import * as packageJson from '../package.json'; 
+import * as packageJson from '../package.json';
 import { clearTmLanguageCache } from "./syntaxHighlighter";
+import { AppReviewFeature } from "./appReviewFeature";
 
 
-const pluginID = packageJson.name === "vscode-mermaid-chart" ?  "MERMAIDCHART_VS_CODE_PLUGIN" : "MERMAID_PREVIEW_VS_CODE_PLUGIN";
+const pluginID = packageJson.name === "vscode-mermaid-chart" ? "MERMAIDCHART_VS_CODE_PLUGIN" : "MERMAID_PREVIEW_VS_CODE_PLUGIN";
 let diagramMappings: { [key: string]: string[] } = require('../src/diagramTypeWords.json');
 let isExtensionStarted = false;
+let appReviewFeatureInstance: AppReviewFeature | undefined;
+let aiToolsRegistered = false;
 
+function registerAiToolsOnce(context: vscode.ExtensionContext): void {
+  if (aiToolsRegistered) {
+    return;
+  }
+  try {
+    registerTools(context);
+    aiToolsRegistered = true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("already registered")) {
+      aiToolsRegistered = true;
+      console.warn("[MermaidExtension] AI tools already registered — skipping duplicate registerTools");
+      return;
+    }
+    throw err;
+  }
+}
+
+function registerAppReviewFeatureOnce(context: vscode.ExtensionContext): void {
+  if (appReviewFeatureInstance) {
+    return;
+  }
+  appReviewFeatureInstance = new AppReviewFeature();
+  appReviewFeatureInstance.register(context);
+  context.subscriptions.push({
+    dispose: () => {
+      appReviewFeatureInstance?.dispose();
+      appReviewFeatureInstance = undefined;
+    },
+  });
+}
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log("Activating Mermaid Chart extension");
+  setReviewDiagramExtensionPath(context.extensionUri.fsPath);
 
   initializePlugin(pluginID);
-
-  analytics.trackActivation();
-  
-  // Register AI tools first to ensure they're available
   console.log("[MermaidExtension] Registering AI tools...");
-  registerTools(context);
-  
+  registerAiToolsOnce(context);
+
   // Initialize the bridge for commercial tools
   setPreviewBridge(new PreviewBridgeImpl());
   setValidationBridge(new ValidationBridgeImpl());
   setDiagramDiffBridge({ openDiagramDiffWebviews });
-  
+
   // Initialize AI chat participant after tools are registered
   initializeAIChatParticipant(context);
+
+  registerAppReviewFeatureOnce(context);
 
   const mermaidWebviewProvider = new MermaidWebviewProvider(context);
 
   const mcAPI = new MermaidChartVSCode();
-  
+
   // Set the API instance for PreviewPanel to use for repair functionality
   PreviewPanel.setMcAPI(mcAPI);
   // Create global RemoteSyncHandler instance
@@ -88,7 +131,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push({
     dispose: () => remoteSyncHandler.dispose()
   });
-  
+
   context.subscriptions.push(
     vscode.commands.registerCommand('mermaidChart.login', async () => {
       await mcAPI.login();
@@ -122,22 +165,42 @@ export async function activate(context: vscode.ExtensionContext) {
   // Always show chart view in local-only mode (skip login requirement)
   updateViewVisibility(true, mermaidWebviewProvider, mermaidChartProvider);
 
+  const diffProvider = new DiagramImprovementDiffProvider();
+  context.subscriptions.push(diffProvider);
+
+  const diagramImprovementPanel = new DiagramImprovementPanel(context.extensionUri, diffProvider, context);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      DiagramImprovementPanel.viewType,
+      diagramImprovementPanel
+    )
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand('mermaidChart.preview', getPreview)
   );
 
-  const activeEditor = vscode.window.activeTextEditor;
-    if (activeEditor && !isExtensionStarted) {
-        isExtensionStarted = true;
-        handleTextDocumentChange(activeEditor, diagramMappings, true);
-    }
+  context.subscriptions.push(
+    vscode.commands.registerCommand("mermaidChart.improveDiagram", async (uri?: vscode.Uri) => {
+      analytics.trackImproveDiagramInvoked();
+      await diagramImprovementPanel.openImproveDiagram(uri);
+    }),
+    vscode.commands.registerCommand("mermaidChart.repairDiagram", repairActiveDiagram)
+  );
 
-  vscode.workspace.onDidChangeTextDocument((event) =>
-    {
-      handleTextDocumentChange(event, diagramMappings, false);
-      updateMermaidChartTokenHighlighting();
-      triggerSuggestIfEmpty(event.document);
-    },
+  const activeEditor = vscode.window.activeTextEditor;
+  diagramImprovementPanel.syncToActiveDiagram();
+  if (activeEditor && !isExtensionStarted) {
+    isExtensionStarted = true;
+    handleTextDocumentChange(activeEditor, diagramMappings, true);
+  }
+
+  vscode.workspace.onDidChangeTextDocument((event) => {
+    handleTextDocumentChange(event, diagramMappings, false);
+    updateMermaidChartTokenHighlighting();
+    triggerSuggestIfEmpty(event.document);
+    updateMermaidIdContext(event.document);
+  },
     null,
     context.subscriptions
   );
@@ -146,11 +209,13 @@ export async function activate(context: vscode.ExtensionContext) {
     (event) => {
       handleTextDocumentChange(event, diagramMappings, true);
       updateMermaidChartTokenHighlighting();
+      updateMermaidIdContext(event?.document);
+      diagramImprovementPanel.syncToActiveDiagram();
     },
     null,
     context.subscriptions
   );
-  
+
   vscode.commands.registerCommand('mermaidChart.createMermaidFile', async () => {
     createMermaidFile(context, null, false);
   });
@@ -160,25 +225,33 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
- let  mermaidChartTokenDecoration: vscode.TextEditorDecorationType;
+  let mermaidChartTokenDecoration: vscode.TextEditorDecorationType;
   mermaidChartTokenDecoration = getMermaidChartTokenDecoration();
   vscode.window.onDidChangeActiveColorTheme(() => {
-    mermaidChartTokenDecoration.dispose(); 
-    mermaidChartTokenDecoration = getMermaidChartTokenDecoration(); 
+    mermaidChartTokenDecoration.dispose();
+    mermaidChartTokenDecoration = getMermaidChartTokenDecoration();
   });
-  
 
 
-    const mermaidChartGutterIconDecoration = vscode.window.createTextEditorDecorationType({
-      gutterIconPath: vscode.Uri.file(context.asAbsolutePath("images/mermaid-icon.svg")), // Add the icon file path
-      gutterIconSize: "8x8",// Adjust the icon size as desired
-    });
+
+  const mermaidChartGutterIconDecoration = vscode.window.createTextEditorDecorationType({
+    gutterIconPath: vscode.Uri.file(context.asAbsolutePath("images/mermaid-icon.svg")), // Add the icon file path
+    gutterIconSize: "8x8",// Adjust the icon size as desired
+  });
   let codeLensProvider: MermaidChartCodeLensProvider | undefined;
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("mermaidChart.showGenerateDiagramCodeLens")) {
+        codeLensProvider?.refresh();
+      }
+    })
+  );
 
   function updateMermaidChartTokenHighlighting() {
     const activeEditor = vscode.window.activeTextEditor;
     if (activeEditor) {
-      let mermaidChartTokens : MermaidChartToken[] = [];
+      let mermaidChartTokens: MermaidChartToken[] = [];
       if (!isAuxFile(activeEditor.document.fileName)) {
         const comments = findComments(activeEditor.document);
         mermaidChartTokens = findMermaidChartTokens(
@@ -186,13 +259,13 @@ export async function activate(context: vscode.ExtensionContext) {
           comments
         );
 
-      applyMermaidChartTokenHighlighting(
-        activeEditor,
-        mermaidChartTokens,
-        mermaidChartTokenDecoration,
-        mermaidChartGutterIconDecoration,
-        false
-      );
+        applyMermaidChartTokenHighlighting(
+          activeEditor,
+          mermaidChartTokens,
+          mermaidChartTokenDecoration,
+          mermaidChartGutterIconDecoration,
+          false
+        );
 
       } else {
         mermaidChartTokens = findMermaidChartTokensFromAuxFiles(activeEditor.document);
@@ -216,7 +289,29 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
 
+  function updateMermaidIdContext(document?: vscode.TextDocument) {
+    if (!document) {
+      vscode.commands.executeCommand("setContext", "mermaid.hasId", false);
+      return;
+    }
+
+    // Check if document is a mermaid file
+    const isMermaidFile = document.languageId.startsWith("mermaid") ||
+      document.fileName.match(/\.(mmd|mermaid)$/);
+
+    if (!isMermaidFile) {
+      vscode.commands.executeCommand("setContext", "mermaid.hasId", false);
+      return;
+    }
+
+    // Check if the mermaid document has an ID
+    const content = document.getText();
+    const hasId = extractIdFromCode(content) !== undefined;
+    vscode.commands.executeCommand("setContext", "mermaid.hasId", hasId);
+  }
+
   updateMermaidChartTokenHighlighting();
+  updateMermaidIdContext(vscode.window.activeTextEditor?.document);
 
 
   const viewCommandDisposable = vscode.commands.registerCommand(
@@ -249,134 +344,135 @@ export async function activate(context: vscode.ExtensionContext) {
       }
       let projects = getAllTreeViewProjectsCache();
       if (projects.length === 0) {
-        if(MermaidChartProvider.isSyncing) {
+        if (MermaidChartProvider.isSyncing) {
           await MermaidChartProvider.waitForSync();
         } else {
           vscode.window.showInformationMessage('Please wait, diagrams are being synchronized...');
           await mermaidChartProvider.syncMermaidChart();
         }
         projects = getAllTreeViewProjectsCache();
-    }
-   
+      }
+
       // Find the diagram code based on the UUID
-       const diagramCode = findDiagramCode(projects,uuid);
-        
+      const diagramCode = findDiagramCode(projects, uuid);
+
       // Create the Mermaid file if diagramCode is found
       if (diagramCode) {
-      const diagramId = uuid;
-      const processedCode = ensureIdField(diagramCode, diagramId);
-      const projectId = getProjectIdForDocument(diagramId);
+        const diagramId = uuid;
+        const processedCode = ensureIdField(diagramCode, diagramId);
+        const projectId = getProjectIdForDocument(diagramId);
 
-      if (projectId) {
-        await mcAPI.setDocument({
-          documentID: diagramId,
-          projectID: projectId,
-          code: processedCode,
-        });
-        updateDiagramInCache(diagramId, processedCode);
-      }
-      createMermaidFile(context, processedCode, true);
+        if (projectId) {
+          await mcAPI.setDocument({
+            documentID: diagramId,
+            projectID: projectId,
+            code: processedCode,
+          });
+          updateDiagramInCache(diagramId, processedCode);
+        }
+        createMermaidFile(context, processedCode, true);
       } else {
         vscode.window.showErrorMessage("Diagram not found for the given UUID.");
       }
     })
   );
 
-context.subscriptions.push(
-  vscode.commands.registerCommand('mermaid.editAuxFile', async (uri: vscode.Uri, range: vscode.Range) => {
-    try {
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mermaid.editAuxFile', async (uri: vscode.Uri, range: vscode.Range) => {
+      try {
+        const document = await vscode.workspace.openTextDocument(uri);
+        const content = document.getText();
+        const blockContent = content.substring(document.offsetAt(range.start), document.offsetAt(range.end));
+        const normalizedContent = normalizeMermaidText(blockContent);
+
+        if (!normalizedContent) {
+          vscode.window.showErrorMessage("No valid Mermaid diagram found in the selected range.");
+          return;
+        }
+
+        const editor = await createMermaidFile(context, normalizedContent, true);
+        if (editor) {
+          syncAuxFile(editor.document.uri.toString(), uri, range);
+        }
+      } catch (error) {
+        analytics.trackException(error);
+        vscode.window.showErrorMessage(`Error processing Mermaid diagram: ${error instanceof Error ? error.message : "Unknown error occurred."}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mermaid.connectDiagram', async (uri: vscode.Uri, range: vscode.Range) => {
+      if (!(await ensureAuthenticated())) {
+        return;
+      }
       const document = await vscode.workspace.openTextDocument(uri);
       const content = document.getText();
-      const blockContent = content.substring(document.offsetAt(range.start), document.offsetAt(range.end));
-      const normalizedContent = normalizeMermaidText(blockContent);
-      
-      if (!normalizedContent) {
-        vscode.window.showErrorMessage("No valid Mermaid diagram found in the selected range.");
+      const blockContent = content.substring(document.offsetAt(range.start), document.offsetAt(range.end)).trim();
+      if (MermaidChartProvider.isSyncing) {
+        await MermaidChartProvider.waitForSync();
+      }
+      const projects = getAllTreeViewProjectsCache();
+      let flattenedProjects = flattenProjects(projects);
+      if (flattenedProjects.length === 0) {
+        vscode.window.showInformationMessage('Please wait, diagrams are being synchronized...');
+        await mermaidChartProvider.syncMermaidChart();
+        const updatedProjects = getAllTreeViewProjectsCache();
+        flattenedProjects = flattenProjects(updatedProjects);
+      }
+      if (flattenedProjects.length === 0) {
+        vscode.window.showInformationMessage('No projects available to connect the diagram. Please try again later.');
         return;
       }
-      
-      const editor = await createMermaidFile(context, normalizedContent, true);
-      if (editor) {
-        syncAuxFile(editor.document.uri.toString(), uri, range);
-      }
-    } catch (error) {
-      analytics.trackException(error);
-      vscode.window.showErrorMessage(`Error processing Mermaid diagram: ${error instanceof Error ? error.message : "Unknown error occurred."}`);
-    }
-  })
-);
- 
-context.subscriptions.push(
-  vscode.commands.registerCommand('mermaid.connectDiagram', async (uri: vscode.Uri, range: vscode.Range) => {
-    if (!(await ensureAuthenticated())) {
-      return;
-    }
-    const document = await vscode.workspace.openTextDocument(uri);
-    const content = document.getText();
-    const blockContent = content.substring(document.offsetAt(range.start), document.offsetAt(range.end)).trim();
-    if(MermaidChartProvider.isSyncing) {
-      await MermaidChartProvider.waitForSync();
-    }
-    const projects = getAllTreeViewProjectsCache();
-    let flattenedProjects = flattenProjects(projects);
-    if (flattenedProjects.length === 0) {
-      vscode.window.showInformationMessage('Please wait, diagrams are being synchronized...');
-      await mermaidChartProvider.syncMermaidChart();
-      const updatedProjects = getAllTreeViewProjectsCache();
-      flattenedProjects = flattenProjects(updatedProjects);
-    }
-    if (flattenedProjects.length === 0) {
-      vscode.window.showInformationMessage('No projects available to connect the diagram. Please try again later.');
-      return;
-    }
-    const selectedProject = await vscode.window.showQuickPick(
-      flattenedProjects.map((p) => ({ label: p.title, description: p.title, projectId: p.uuid })),
-      { placeHolder: "Select a project to save the diagram" }
-    );
+      const selectedProject = await vscode.window.showQuickPick(
+        flattenedProjects.map((p) => ({ label: p.title, description: p.title, projectId: p.uuid })),
+        { placeHolder: "Select a project to save the diagram" }
+      );
 
-    if (!selectedProject || !selectedProject?.projectId) {
-      vscode.window.showInformationMessage("Operation cancelled.");
-      return;
-    }
-
-    try {
-      const newDocument = await mcAPI.createDocument(selectedProject.projectId);
-
-      if (!newDocument || !newDocument.documentID) {
-        vscode.window.showErrorMessage("Failed to create a new document.");
+      if (!selectedProject || !selectedProject?.projectId) {
+        vscode.window.showInformationMessage("Operation cancelled.");
         return;
       }
 
-      const normalizedContent = normalizeMermaidText(blockContent);
-      const processedCode = ensureIdField(normalizedContent, newDocument.documentID);
-      await mcAPI.setDocument({
-        documentID: newDocument.documentID,
-        projectID: selectedProject.projectId,
-        code: processedCode,
-      });
-      mermaidChartProvider.syncMermaidChart();
-      const editor = await createMermaidFile(context, processedCode, true);
+      try {
+        const newDocument = await mcAPI.createDocument(selectedProject.projectId);
 
-      if (editor) {
-        syncAuxFile(editor.document.uri.toString(), uri, range);
-      }
-    } catch (error) {
-      if (error instanceof Error ) {
-        const errMessage = error.message; 
-        const matchedError = Object.keys(customErrorMessage).find((key) =>errMessage.includes(key));
-        vscode.window.showErrorMessage(matchedError ? customErrorMessage[matchedError] : `Error: ${errMessage}`);
+        if (!newDocument || !newDocument.documentID) {
+          vscode.window.showErrorMessage("Failed to create a new document.");
+          return;
+        }
+
+        const normalizedContent = normalizeMermaidText(blockContent);
+        const processedCode = ensureIdField(normalizedContent, newDocument.documentID);
+        await mcAPI.setDocument({
+          documentID: newDocument.documentID,
+          projectID: selectedProject.projectId,
+          code: processedCode,
+        });
+        mermaidChartProvider.syncMermaidChart();
+        const editor = await createMermaidFile(context, processedCode, true);
+
+        if (editor) {
+          syncAuxFile(editor.document.uri.toString(), uri, range);
+          analytics.trackConnectDiagramToMermaidChart();
+        }
+      } catch (error) {
+        if (error instanceof Error) {
+          const errMessage = error.message;
+          const matchedError = Object.keys(customErrorMessage).find((key) => errMessage.includes(key));
+          vscode.window.showErrorMessage(matchedError ? customErrorMessage[matchedError] : `Error: ${errMessage}`);
         } else {
-        vscode.window.showErrorMessage("Unknown error occurred.");
+          vscode.window.showErrorMessage("Unknown error occurred.");
         }
         analytics.trackException(error);
       }
-  })
-);
+    })
+  );
 
-vscode.workspace.onWillSaveTextDocument(async (event) => {
-  // Remote sync on save disabled for local-only mode - files save locally only
-  return;
-});
+  vscode.workspace.onWillSaveTextDocument(async (event) => {
+    // Remote sync on save disabled for local-only mode - files save locally only
+    return;
+  });
 
   context.subscriptions.push(
     vscode.commands.registerCommand('mermaidChart.syncDiagramWithMermaid', async () => {
@@ -389,211 +485,190 @@ vscode.workspace.onWillSaveTextDocument(async (event) => {
   const syncFileToMermaidChart = async (document: vscode.TextDocument): Promise<void> => {
     // Early return if not a mermaid file
     if (!document.languageId.startsWith("mermaid")) {
-        vscode.window.showInformationMessage('This file is not a Mermaid diagram.');
-        return;
+      vscode.window.showInformationMessage('This file is not a Mermaid diagram.');
+      return;
     }
 
     if (MermaidChartProvider.isSyncing) {
-        vscode.window.showInformationMessage('Please wait, diagrams are being synchronized...');
-        await MermaidChartProvider.waitForSync();
+      vscode.window.showInformationMessage('Please wait, diagrams are being synchronized...');
+      await MermaidChartProvider.waitForSync();
     }
 
     const content = document.getText();
-    
+
     // Early return if content is empty
     if (!content.trim()) {
-        vscode.window.showInformationMessage('The file is empty.');
-        return;
+      vscode.window.showInformationMessage('The file is empty.');
+      return;
     }
 
     try {
-        const diagramId = extractIdFromCode(content);
-        const tempUri = document.uri.toString();
+      const diagramId = extractIdFromCode(content);
+      const tempUri = document.uri.toString();
 
-        // Check if this file actually needs syncing
-        const needsSync = TempFileCache.hasTempUri(context, tempUri) && diagramId;
+      // Check if this file actually needs syncing
+      const needsSync = TempFileCache.hasTempUri(context, tempUri) && diagramId;
 
-        if (needsSync) {
-            // Only show sync popup for files that actually need syncing
+      if (needsSync) {
+        // Only show sync popup for files that actually need syncing
         const progressPromise = vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: 'Syncing diagram with Mermaid Chart...',
-            cancellable: false
+          location: vscode.ProgressLocation.Notification,
+          title: 'Syncing diagram with Mermaid Chart...',
+          cancellable: false
         }, async (progress) => {
-                const projectId = getProjectIdForDocument(diagramId);
-                if (!projectId) {
-                    vscode.window.showErrorMessage('No project ID found for this diagram.');
-                    return;
-                }
+          const projectId = getProjectIdForDocument(diagramId);
+          if (!projectId) {
+            vscode.window.showErrorMessage('No project ID found for this diagram.');
+            return;
+          }
 
-                progress.report({ message: 'Checking for remote changes...' });
-                
-                // Create a promise that resolves when remote sync is complete
-                const syncDecision = await remoteSyncHandler.handleRemoteChanges(
-                    document,
-                    diagramId
-                );
+          progress.report({ message: 'Checking for remote changes...' });
 
-                if (syncDecision === 'abort') {
-                    return;
-                }
+          // Create a promise that resolves when remote sync is complete
+          const syncDecision = await remoteSyncHandler.handleRemoteChanges(
+            document,
+            diagramId
+          );
 
-                progress.report({ message: 'Saving changes...' });
-                
-                await mcAPI.setDocument({
-                    documentID: diagramId,
-                    projectID: projectId,
-                    code: document.getText(),
-                });
+          if (syncDecision === 'abort') {
+            return;
+          }
 
-                updateDiagramInCache(diagramId, document.getText());
+          progress.report({ message: 'Saving changes...' });
 
-                vscode.window.showInformationMessage(
-                    `Diagram synced successfully with Mermaid Chart.`
-                );
+          await mcAPI.setDocument({
+            documentID: diagramId,
+            projectID: projectId,
+            code: document.getText(),
+          });
+
+          updateDiagramInCache(diagramId, document.getText());
+
+          vscode.window.showInformationMessage(
+            `Diagram synced successfully with Mermaid Chart.`
+          );
         });
 
         const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Sync operation timed out')), 100000);
+          setTimeout(() => reject(new Error('Sync operation timed out')), 100000);
         });
 
-            await Promise.race([progressPromise, timeoutPromise]);
-        } else {
-            // For local files or temp files without IDs, just save normally
-            if (TempFileCache.hasTempUri(context, tempUri) && !diagramId) {
-                vscode.window.showInformationMessage('This is a temporary buffer, it cannot be saved locally');
-                return;
-            }
-            
-            // Normal save for local files
-            await vscode.commands.executeCommand('workbench.action.files.save');
+        await Promise.race([progressPromise, timeoutPromise]);
+      } else {
+        // For local files or temp files without IDs, just save normally
+        if (TempFileCache.hasTempUri(context, tempUri) && !diagramId) {
+          vscode.window.showInformationMessage('This is a temporary buffer, it cannot be saved locally');
+          return;
         }
+
+        // Normal save for local files
+        await vscode.commands.executeCommand('workbench.action.files.save');
+      }
 
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error occurred.";
-        analytics.trackException(error);
-        vscode.window.showErrorMessage(`Failed to sync file: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred.";
+      analytics.trackException(error);
+      vscode.window.showErrorMessage(`Failed to sync file: ${errorMessage}`);
     }
-};
+  };
 
-context.subscriptions.push(
-  vscode.commands.registerCommand('mermaidChart.connectDiagramToMermaidChart', async () => {
-    const activeEditor = vscode.window.activeTextEditor;
-    const document = activeEditor?.document;
-
-    if (!document) {
-      vscode.window.showErrorMessage("No active document found.");
-      return;
-    }
-
-    const content = document.getText();
-    const id = extractIdFromCode(content);
-    
-    // Check if the document is already connected
-    if (id) {
-      vscode.window.showWarningMessage("This diagram is already connected to Mermaid Chart.");
-      return;
-    }
-    if(MermaidChartProvider.isSyncing) {
-      await MermaidChartProvider.waitForSync();
-    }
-    const projects = getAllTreeViewProjectsCache();
-    let flattenedProjects = flattenProjects(projects);
-    if (flattenedProjects.length === 0) {
-      vscode.window.showInformationMessage('Please wait, diagrams are being synchronized...');
-      await mermaidChartProvider.syncMermaidChart();
-      const updatedProjects = getAllTreeViewProjectsCache();
-      flattenedProjects = flattenProjects(updatedProjects);
-    }
-    if (flattenedProjects.length === 0) {
-      vscode.window.showInformationMessage('No projects available to connect the diagram. Please try again later.');
-      return;
-    }
-
-    const selectedProject = await vscode.window.showQuickPick(
-      flattenedProjects.map((p) => ({ label: p.title, description: p.title, projectId: p.uuid })),
-      { placeHolder: "Select a project to save the diagram" }
-    );
-
-    if (!selectedProject || !selectedProject.projectId) {
-      vscode.window.showInformationMessage("Operation cancelled.");
-      return;
-    }
-
-    try {
-    const newDocument = await mcAPI.createDocument(selectedProject.projectId);
-
-    if (!newDocument || !newDocument.documentID) {
-      vscode.window.showErrorMessage("Failed to create a new document.");
-      return;
-    }
-
-    const processedCode = ensureIdField(content, newDocument.documentID);
-    await mcAPI.setDocument({
-      documentID: newDocument.documentID,
-      projectID: selectedProject.projectId,
-      code: processedCode,
-    });
-    mermaidChartProvider.syncMermaidChart();
-
-    // Apply the new processedCode to the document
-    await activeEditor.edit((editBuilder) => {
-      const fullRange = new vscode.Range(
-        activeEditor.document.positionAt(0),
-        activeEditor.document.positionAt(content.length)
-      );
-      editBuilder.replace(fullRange, processedCode);
-    });
-
-    PreviewPanel.createOrShow(document);
-    vscode.window.showInformationMessage(`Diagram connected successfully with Mermaid chart.`);
-    }   catch(error) {
-      if (error instanceof Error ) {
-        const errMessage = error.message;
-        const matchedError = Object.keys(customErrorMessage).find((key) =>errMessage.includes(key));
-        vscode.window.showErrorMessage(matchedError ? customErrorMessage[matchedError] : `Error: ${errMessage}`);
-        } else {
-        vscode.window.showErrorMessage("Unknown error occurred.");
-        }
-        analytics.trackException(error);
-    }
-
-  })
-);
-
-  vscode.commands.registerCommand(
-    "mermaidChart.useDiagram",
-    async (item: Document) => {
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mermaidChart.connectDiagramToMermaidChart', async () => {
       if (!(await ensureAuthenticated())) {
         return;
       }
-      if (!item || !item.code) {
-        vscode.window.showErrorMessage("No code found for this diagram.");
+
+      const activeEditor = vscode.window.activeTextEditor;
+      const document = activeEditor?.document;
+
+      if (!document) {
+        vscode.window.showErrorMessage("No active document found.");
         return;
       }
 
-      const projectId = getProjectIdForDocument(item.uuid);
-      if (!projectId) {
-        vscode.window.showErrorMessage("No project ID found for this diagram.");
+      const content = document.getText();
+      const id = extractIdFromCode(content);
+
+      // Check if the document is already connected
+      if (id) {
+        vscode.window.showWarningMessage("This diagram is already connected to Mermaid Chart.");
         return;
       }
-      const processedCode = ensureIdField(item.code, item.uuid);
-      await mcAPI.setDocument({
-        documentID: item.uuid,
-        projectID: projectId,
-        code: processedCode,
-      });
-      updateDiagramInCache(item.uuid, processedCode);
-      createMermaidFile(context, processedCode, false);
-    },
+      if (MermaidChartProvider.isSyncing) {
+        await MermaidChartProvider.waitForSync();
+      }
+      const projects = getAllTreeViewProjectsCache();
+      let flattenedProjects = flattenProjects(projects);
+      if (flattenedProjects.length === 0) {
+        vscode.window.showInformationMessage('Please wait, diagrams are being synchronized...');
+        await mermaidChartProvider.syncMermaidChart();
+        const updatedProjects = getAllTreeViewProjectsCache();
+        flattenedProjects = flattenProjects(updatedProjects);
+      }
+      if (flattenedProjects.length === 0) {
+        vscode.window.showInformationMessage('No projects available to connect the diagram. Please try again later.');
+        return;
+      }
+
+      const selectedProject = await vscode.window.showQuickPick(
+        flattenedProjects.map((p) => ({ label: p.title, description: p.title, projectId: p.uuid })),
+        { placeHolder: "Select a project to save the diagram" }
+      );
+
+      if (!selectedProject || !selectedProject.projectId) {
+        vscode.window.showInformationMessage("Operation cancelled.");
+        return;
+      }
+
+      try {
+        const newDocument = await mcAPI.createDocument(selectedProject.projectId);
+
+        if (!newDocument || !newDocument.documentID) {
+          vscode.window.showErrorMessage("Failed to create a new document.");
+          return;
+        }
+
+        const processedCode = ensureIdField(content, newDocument.documentID);
+        await mcAPI.setDocument({
+          documentID: newDocument.documentID,
+          projectID: selectedProject.projectId,
+          code: processedCode,
+        });
+        mermaidChartProvider.syncMermaidChart();
+
+        // Apply the new processedCode to the document
+        await activeEditor.edit((editBuilder) => {
+          const fullRange = new vscode.Range(
+            activeEditor.document.positionAt(0),
+            activeEditor.document.positionAt(content.length)
+          );
+          editBuilder.replace(fullRange, processedCode);
+        });
+
+        PreviewPanel.createOrShow(document);
+        analytics.trackConnectDiagramToMermaidChart();
+        vscode.window.showInformationMessage(`Diagram connected successfully with Mermaid chart.`);
+      } catch (error) {
+        if (error instanceof Error) {
+          const errMessage = error.message;
+          const matchedError = Object.keys(customErrorMessage).find((key) => errMessage.includes(key));
+          vscode.window.showErrorMessage(matchedError ? customErrorMessage[matchedError] : `Error: ${errMessage}`);
+        } else {
+          vscode.window.showErrorMessage("Unknown error occurred.");
+        }
+        analytics.trackException(error);
+      }
+
+    })
   );
+
 
   context.subscriptions.push(
     vscode.commands.registerCommand("mermaidChart.focus", () => {
       const emptyMermaidChartToken: MCTreeItem = {
         uuid: "",
         title: "",
-        code : "",
+        code: "",
         range: new vscode.Range(0, 0, 0, 0),
       };
       treeView.reveal(emptyMermaidChartToken, {
@@ -607,7 +682,7 @@ context.subscriptions.push(
   context.subscriptions.push(
     vscode.commands.registerCommand("mermaidChart.refresh", () => {
       mermaidChartProvider.refresh();
- 
+
     })
   );
 
@@ -622,12 +697,12 @@ context.subscriptions.push(
   );
   context.subscriptions.push(disposable);
 
-const insertUuidIntoEditorDisposable = vscode.commands.registerCommand(
-  "mermaidChart.insertUuidIntoEditor",
-  ({ uuid }: MCTreeItem) =>
-      uuid ? insertMermaidChartToken(uuid, mermaidChartProvider) 
-           : vscode.window.showErrorMessage("Invalid item selected. No UUID found.")
-);
+  const insertUuidIntoEditorDisposable = vscode.commands.registerCommand(
+    "mermaidChart.insertUuidIntoEditor",
+    ({ uuid }: MCTreeItem) =>
+      uuid ? insertMermaidChartToken(uuid, mermaidChartProvider)
+        : vscode.window.showErrorMessage("Invalid item selected. No UUID found.")
+  );
 
   context.subscriptions.push(insertUuidIntoEditorDisposable);
 
@@ -637,19 +712,19 @@ const insertUuidIntoEditorDisposable = vscode.commands.registerCommand(
     })
   );
 
-context.subscriptions.push(
-  vscode.commands.registerCommand("mermaidChart.diagramHelp", () => {
+  context.subscriptions.push(
+    vscode.commands.registerCommand("mermaidChart.diagramHelp", () => {
       const activeEditor = vscode.window.activeTextEditor;
       if (activeEditor) {
-          const documentText = activeEditor.document.getText();
-          const firstWord = getFirstWordFromDiagram(documentText);
-          const helpUrl = getHelpUrl(firstWord);
-          vscode.env.openExternal(vscode.Uri.parse(helpUrl));
+        const documentText = activeEditor.document.getText();
+        const firstWord = getFirstWordFromDiagram(documentText);
+        const helpUrl = getHelpUrl(firstWord);
+        vscode.env.openExternal(vscode.Uri.parse(helpUrl));
       } else {
-          vscode.window.showWarningMessage("No active editor found.");
+        vscode.window.showWarningMessage("No active editor found.");
       }
-  })
-);
+    })
+  );
 
   const provider = vscode.languages.registerCompletionItemProvider(
     [
@@ -657,32 +732,32 @@ context.subscriptions.push(
       { scheme: 'untitled' }
     ],
     {
-        provideCompletionItems(document, position, token, context) {
-            const languageId = document.languageId.toLowerCase();
-            if (document.getText().trim() === "") {
-              return;
-            }
-            // Ensure the languageId is exactly "mermaid" or starts with "mermaid"
-            if (!(languageId === 'mermaid' || languageId.startsWith('mermaid'))) {
-                return [];
-            }
+      provideCompletionItems(document, position, token, context) {
+        const languageId = document.languageId.toLowerCase();
+        if (document.getText().trim() === "") {
+          return;
+        }
+        // Ensure the languageId is exactly "mermaid" or starts with "mermaid"
+        if (!(languageId === 'mermaid' || languageId.startsWith('mermaid'))) {
+          return [];
+        }
 
-            const snippets = getSnippetsBasedOnDiagram(languageId);
+        const snippets = getSnippetsBasedOnDiagram(languageId);
 
-            const suggestions: vscode.CompletionItem[] = snippets.map(snippet => {
-                const item = new vscode.CompletionItem(
-                    snippet.id,
-                    vscode.CompletionItemKind.Snippet
-                );
-                item.insertText = new vscode.SnippetString(snippet.completion);
-                item.documentation = new vscode.MarkdownString(
-                    `**${snippet.name}**\n\n\`\`\`mermaid\n${snippet.sample}\n\`\`\``
-                );
-                return item;
-            });
+        const suggestions: vscode.CompletionItem[] = snippets.map(snippet => {
+          const item = new vscode.CompletionItem(
+            snippet.id,
+            vscode.CompletionItemKind.Snippet
+          );
+          item.insertText = new vscode.SnippetString(snippet.completion);
+          item.documentation = new vscode.MarkdownString(
+            `**${snippet.name}**\n\n\`\`\`mermaid\n${snippet.sample}\n\`\`\``
+          );
+          return item;
+        });
 
-            return suggestions;
-        },
+        return suggestions;
+      },
     },
     'm'
   );
@@ -711,7 +786,7 @@ context.subscriptions.push(
           "GitHub Copilot Chat extension is not installed. Please install it from the VS Code Marketplace.",
           installOption
         );
-  
+
         if (selection === installOption) {
           await vscode.commands.executeCommand("extension.open", "GitHub.copilot-chat");
         }
@@ -720,213 +795,253 @@ context.subscriptions.push(
       await vscode.commands.executeCommand(
         "workbench.panel.chat.view.copilot.focus"
       );
-    
+
       await vscode.commands.executeCommand("workbench.action.chat.focusInput");
       await vscode.commands.executeCommand("deleteAllLeft");
       await vscode.commands.executeCommand("default:type", { text: "@mermaid-chart" });
+      analytics.trackOpenCopilotChat();
     })
   );
 
-context.subscriptions.push(
-  vscode.commands.registerCommand(
-    "mermaidChart.generateCloudDiagram",
-    async () => {
-      const copilotExtension = vscode.extensions.getExtension(
-        "GitHub.copilot-chat"
-      );
-      if (!copilotExtension) {
-        const installOption = "Install GitHub Copilot Chat";
-        const selection = await vscode.window.showErrorMessage(
-          "GitHub Copilot Chat extension is not installed. Please install it from the VS Code Marketplace.",
-          installOption
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "mermaidChart.generateCloudDiagram",
+      async () => {
+        const copilotExtension = vscode.extensions.getExtension(
+          "GitHub.copilot-chat"
         );
-
-        if (selection === installOption) {
-          await vscode.commands.executeCommand(
-            "extension.open",
-            "GitHub.copilot-chat"
+        if (!copilotExtension) {
+          const installOption = "Install GitHub Copilot Chat";
+          const selection = await vscode.window.showErrorMessage(
+            "GitHub Copilot Chat extension is not installed. Please install it from the VS Code Marketplace.",
+            installOption
           );
-        }
-        return;
-      }
-      await vscode.commands.executeCommand("workbench.panel.chat.view.copilot.focus");
-      await vscode.commands.executeCommand("workbench.action.chat.focusInput");
-      await vscode.commands.executeCommand("deleteAllLeft");
-      await vscode.commands.executeCommand("default:type", { text: "@mermaid-chart /generate_cloud_architecture_diagram"});
-      
-      vscode.commands.executeCommand("workbench.action.chat.submit");
-    }
-  )
-);
 
-context.subscriptions.push(
-  vscode.commands.registerCommand(
-    "mermaidChart.generateERDiagram",
-    async () => {
-      const copilotExtension = vscode.extensions.getExtension(
-        "GitHub.copilot-chat"
-      );
-      if (!copilotExtension) {
-        const installOption = "Install GitHub Copilot Chat";
-        const selection = await vscode.window.showErrorMessage(
-          "GitHub Copilot Chat extension is not installed. Please install it from the VS Code Marketplace.",
-          installOption
-        );
-
-        if (selection === installOption) {
-          await vscode.commands.executeCommand(
-            "extension.open",
-            "GitHub.copilot-chat"
-          );
-        }
-        return;
-      }
-      await vscode.commands.executeCommand("workbench.panel.chat.view.copilot.focus");
-      await vscode.commands.executeCommand("workbench.action.chat.focusInput");
-      await vscode.commands.executeCommand("deleteAllLeft");
-      await vscode.commands.executeCommand("default:type", { text: "@mermaid-chart /generate_er_diagram"});
-      
-      vscode.commands.executeCommand("workbench.action.chat.submit");
-    }
-  )
-);
-
-context.subscriptions.push(
-  vscode.commands.registerCommand(
-    "mermaidChart.generateDockerDiagram",
-    async () => {
-      const copilotExtension = vscode.extensions.getExtension(
-        "GitHub.copilot-chat"
-      );
-      if (!copilotExtension) {
-        const installOption = "Install GitHub Copilot Chat";
-        const selection = await vscode.window.showErrorMessage(
-          "GitHub Copilot Chat extension is not installed. Please install it from the VS Code Marketplace.",
-          installOption
-        );
-
-        if (selection === installOption) {
-          await vscode.commands.executeCommand(
-            "extension.open",
-            "GitHub.copilot-chat"
-          );
-        }
-        return;
-      }
-      await vscode.commands.executeCommand("workbench.panel.chat.view.copilot.focus");
-      await vscode.commands.executeCommand("workbench.action.chat.focusInput");
-      await vscode.commands.executeCommand("deleteAllLeft");
-      await vscode.commands.executeCommand("default:type", { text: "@mermaid-chart /generate_docker_diagram"});
-      
-      vscode.commands.executeCommand("workbench.action.chat.submit");
-    }
-  )
-);
-
-context.subscriptions.push(
-  vscode.commands.registerCommand('mermaidChart.openResponsePreview', async (mermaidCode: string) => {
-    if (!mermaidCode) {
-      vscode.window.showErrorMessage("No Mermaid code provided");
-      return;
-    }
-    await openMermaidPreview(context, mermaidCode);
-  })
-);
-
-
-context.subscriptions.push(
-  vscode.languages.registerCompletionItemProvider(
-    [
-      { scheme: 'file' },
-      { scheme: 'untitled' }
-    ],
-    {
-      provideCompletionItems(document) {
-        if (document.getText().trim() === "") {
-          const templates = getDiagramTemplates();
-          const templateEntries = Object.entries(templates);
-
-          const suggestions = templateEntries.map(([name, code]) => {
-            const item = new vscode.CompletionItem(
-              name,
-              vscode.CompletionItemKind.Snippet
+          if (selection === installOption) {
+            await vscode.commands.executeCommand(
+              "extension.open",
+              "GitHub.copilot-chat"
             );
-            item.insertText = new vscode.SnippetString(code);
-            item.documentation = new vscode.MarkdownString(
-              `**${name}**\n\n\`\`\`mermaid\n${code}\n\`\`\``
-            );
-            return item;
-          });
-          return suggestions;
-        }
-        return [];
-      },
-    },
-  )
-);
-vscode.workspace.onDidOpenTextDocument((document) => {
-  triggerSuggestIfEmpty(document);
-});
-vscode.window.visibleTextEditors.forEach((editor) => {
-  triggerSuggestIfEmpty(editor.document);
-});
-
-// Register markdown preview handler
-context.subscriptions.push(
-  vscode.workspace.onDidOpenTextDocument((document) => {
-    if (document.languageId === 'markdown') {
-      const content = document.getText();
-      if (content.includes('```mermaid')) {
-        // This will ensure our custom preview script is loaded
-        vscode.commands.executeCommand('markdown.preview.refresh');
-      }
-    }
-  })
-);
-context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-  if (e.affectsConfiguration(configSection) || e.affectsConfiguration('workbench.colorTheme')) {
-      vscode.commands.executeCommand('markdown.preview.refresh');
-  }
-}));
-
-// Register the regenerate command from commercial directory
-registerRegenerateCommand(context, mcAPI);
-
-context.subscriptions.push(
-  vscode.commands.registerCommand(
-    'mermaidChart.openDiagramDiffWebviews',
-    (oldContent: string, newContent: string) => {
-      if (typeof oldContent !== 'string' || typeof newContent !== 'string') {
-        console.warn('[Mermaid Diagram Diff] Invalid args:', { oldContent: typeof oldContent, newContent: typeof newContent });
-        vscode.window.showErrorMessage('Diagram diff requires old and new content.');
-        return;
-      }
-      try {
-        openDiagramDiffWebviews(oldContent, newContent);
-      } catch (err) {
-        console.error('[Mermaid Diagram Diff] Command handler error:', err);
-        vscode.window.showErrorMessage(
-          `Diagram diff failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-  )
-);
-
-return {
-  extendMarkdownIt(md: MarkdownIt) {
-      extendMarkdownItWithMermaid(md, {
-          languageIds: () => {
-              return vscode.workspace.getConfiguration(configSection).get<string[]>('languages', ['mermaid']);
           }
+          return;
+        }
+        await vscode.commands.executeCommand("workbench.panel.chat.view.copilot.focus");
+        await vscode.commands.executeCommand("workbench.action.chat.focusInput");
+        await vscode.commands.executeCommand("deleteAllLeft");
+        await vscode.commands.executeCommand("default:type", { text: "@mermaid-chart /generate_cloud_architecture_diagram" });
+
+        vscode.commands.executeCommand("workbench.action.chat.submit");
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "mermaidChart.generateERDiagram",
+      async () => {
+        const copilotExtension = vscode.extensions.getExtension(
+          "GitHub.copilot-chat"
+        );
+        if (!copilotExtension) {
+          const installOption = "Install GitHub Copilot Chat";
+          const selection = await vscode.window.showErrorMessage(
+            "GitHub Copilot Chat extension is not installed. Please install it from the VS Code Marketplace.",
+            installOption
+          );
+
+          if (selection === installOption) {
+            await vscode.commands.executeCommand(
+              "extension.open",
+              "GitHub.copilot-chat"
+            );
+          }
+          return;
+        }
+        await vscode.commands.executeCommand("workbench.panel.chat.view.copilot.focus");
+        await vscode.commands.executeCommand("workbench.action.chat.focusInput");
+        await vscode.commands.executeCommand("deleteAllLeft");
+        await vscode.commands.executeCommand("default:type", { text: "@mermaid-chart /generate_er_diagram" });
+
+        vscode.commands.executeCommand("workbench.action.chat.submit");
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "mermaidChart.generateDockerDiagram",
+      async () => {
+        const copilotExtension = vscode.extensions.getExtension(
+          "GitHub.copilot-chat"
+        );
+        if (!copilotExtension) {
+          const installOption = "Install GitHub Copilot Chat";
+          const selection = await vscode.window.showErrorMessage(
+            "GitHub Copilot Chat extension is not installed. Please install it from the VS Code Marketplace.",
+            installOption
+          );
+
+          if (selection === installOption) {
+            await vscode.commands.executeCommand(
+              "extension.open",
+              "GitHub.copilot-chat"
+            );
+          }
+          return;
+        }
+        await vscode.commands.executeCommand("workbench.panel.chat.view.copilot.focus");
+        await vscode.commands.executeCommand("workbench.action.chat.focusInput");
+        await vscode.commands.executeCommand("deleteAllLeft");
+        await vscode.commands.executeCommand("default:type", { text: "@mermaid-chart /generate_docker_diagram" });
+
+        vscode.commands.executeCommand("workbench.action.chat.submit");
+      }
+    )
+  );
+
+  // Register the generate diagram from code command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "mermaidChart.generateDiagramFromCode",
+      async () => {
+        try {
+          // Check if Copilot Chat is available
+          const copilotExtension = vscode.extensions.getExtension("GitHub.copilot-chat");
+          if (!copilotExtension) {
+            const installOption = "Install GitHub Copilot Chat";
+            const selection = await vscode.window.showErrorMessage(
+              "GitHub Copilot Chat extension is not installed. Please install it from the VS Code Marketplace.",
+              installOption
+            );
+
+            if (selection === installOption) {
+              await vscode.commands.executeCommand("extension.open", "GitHub.copilot-chat");
+            }
+            return;
+          }
+
+          await vscode.commands.executeCommand("workbench.action.chat.open", {
+            query: "@mermaid-chart /generate_diagram_from_code",
+          });
+          analytics.trackGenerateDiagramFromCode();
+
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`Failed to execute command: ${errorMessage}`);
+        }
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('mermaidChart.openResponsePreview', async (mermaidCode: string) => {
+      if (!mermaidCode) {
+        vscode.window.showErrorMessage("No Mermaid code provided");
+        return;
+      }
+      await openMermaidPreview(context, mermaidCode);
+    })
+  );
+
+
+  context.subscriptions.push(
+    vscode.languages.registerCompletionItemProvider(
+      [
+        { scheme: 'file' },
+        { scheme: 'untitled' }
+      ],
+      {
+        provideCompletionItems(document) {
+          if (document.getText().trim() === "") {
+            const templates = getDiagramTemplates();
+            const templateEntries = Object.entries(templates);
+
+            const suggestions = templateEntries.map(([name, code]) => {
+              const item = new vscode.CompletionItem(
+                name,
+                vscode.CompletionItemKind.Snippet
+              );
+              item.insertText = new vscode.SnippetString(code);
+              item.documentation = new vscode.MarkdownString(
+                `**${name}**\n\n\`\`\`mermaid\n${code}\n\`\`\``
+              );
+              return item;
+            });
+            return suggestions;
+          }
+          return [];
+        },
+      },
+    )
+  );
+  vscode.workspace.onDidOpenTextDocument((document) => {
+    triggerSuggestIfEmpty(document);
+  });
+  vscode.window.visibleTextEditors.forEach((editor) => {
+    triggerSuggestIfEmpty(editor.document);
+  });
+
+  // Register markdown preview handler
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((document) => {
+      if (document.languageId === 'markdown') {
+        const content = document.getText();
+        if (content.includes('```mermaid')) {
+          // This will ensure our custom preview script is loaded
+          vscode.commands.executeCommand('markdown.preview.refresh');
+        }
+      }
+    })
+  );
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+    if (e.affectsConfiguration(configSection) || e.affectsConfiguration('workbench.colorTheme')) {
+      vscode.commands.executeCommand('markdown.preview.refresh');
+    }
+  }));
+
+  // Register the regenerate command from commercial directory
+  registerRegenerateCommand(context, mcAPI);
+  registerRegenerateWithMermaidAICommand(context, mcAPI);
+  PreCommitSyncService.register(context, mcAPI);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'mermaidChart.openDiagramDiffWebviews',
+      (oldContent: string, newContent: string) => {
+        if (typeof oldContent !== 'string' || typeof newContent !== 'string') {
+          console.warn('[Mermaid Diagram Diff] Invalid args:', { oldContent: typeof oldContent, newContent: typeof newContent });
+          vscode.window.showErrorMessage('Diagram diff requires old and new content.');
+          return;
+        }
+        try {
+          openDiagramDiffWebviews(oldContent, newContent);
+        } catch (err) {
+          console.error('[Mermaid Diagram Diff] Command handler error:', err);
+          vscode.window.showErrorMessage(
+            `Diagram diff failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    )
+  );
+
+  return {
+    extendMarkdownIt(md: MarkdownIt) {
+      extendMarkdownItWithMermaid(md, {
+        languageIds: () => {
+          return vscode.workspace.getConfiguration(configSection).get<string[]>('languages', ['mermaid']);
+        }
       });
       md.use(injectMermaidTheme);
       return md;
-  }
-};
+    }
+  };
 }
 
 // This method is called when your extension is deactivated
 export function deactivate() {
   clearTmLanguageCache();
+  clearDiagramImprovementCache();
+  aiToolsRegistered = false;
+  appReviewFeatureInstance = undefined;
 }
