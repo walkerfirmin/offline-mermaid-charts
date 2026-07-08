@@ -1,5 +1,6 @@
 import layouts from '@mermaid-js/layout-elk';
 import mermaid, { MermaidConfig } from 'mermaid';
+import { mermaidChartContainerSelector } from "../shared-md-mermaid";
 
 
 
@@ -43,8 +44,7 @@ function renderMermaidElement(
 }
 
 export async function renderMermaidBlocksInElement(root: HTMLElement, writeOut: (mermaidContainer: HTMLElement, content: string) => void): Promise<void> {
-    // Delete existing mermaid outputs
-    for (const el of Array.from(root.querySelectorAll('.mermaid > svg'))) {
+    for (const el of Array.from(root.querySelectorAll(`${mermaidChartContainerSelector} > svg`))) {
         el.remove();
     }
     for (const svg of Array.from(root.querySelectorAll('svg'))) {
@@ -55,7 +55,7 @@ export async function renderMermaidBlocksInElement(root: HTMLElement, writeOut: 
 
     // We need to generate all the container ids sync, but then do the actual rendering async
     const renderPromises: Array<Promise<void>> = [];
-    for (const mermaidContainer of Array.from(root.querySelectorAll<HTMLElement>('.mermaid'))) {
+    for (const mermaidContainer of Array.from(root.querySelectorAll<HTMLElement>(mermaidChartContainerSelector))) {
         renderPromises.push(renderMermaidElement(mermaidContainer, writeOut).p);
     }
 
@@ -67,23 +67,23 @@ export async function renderMermaidBlocksInElement(root: HTMLElement, writeOut: 
 
 
 export async function registerMermaidAddons() {
- 
+
     mermaid.registerLayoutLoaders(layouts);
     mermaid.registerIconPacks([
         {
-          name: 'fa',
-          loader: () => import('@iconify-json/fa6-regular').then((m) => m.icons),
+            name: 'fa',
+            loader: () => import('@iconify-json/fa6-regular').then((m) => m.icons),
         },
         {
             name: 'logos',
             loader: () => import('@iconify-json/logos').then((module) => module.icons),
-          },
-          {
+        },
+        {
             name: 'mdi',
             loader: () => import('@iconify-json/mdi').then((module) => module.icons),
-          },
-      ]);
-   
+        },
+    ]);
+
 }
 
 export function loadMermaidConfig(): MermaidConfig {

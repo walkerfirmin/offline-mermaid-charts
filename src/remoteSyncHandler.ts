@@ -6,7 +6,7 @@ import { MermaidChartVSCode } from './mermaidChartVSCode';
  * All remote sync operations are no-ops.
  */
 export class RemoteSyncHandler {
-    constructor(private mcAPI: MermaidChartVSCode) {}
+    constructor(private mcAPI: MermaidChartVSCode) { }
 
     async handleRemoteChanges(
         _document: vscode.TextDocument,

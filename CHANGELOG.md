@@ -1,5 +1,44 @@
 # Change Log
 
+### 2.7.2 - 2026-07-2
+- Resolved an issue where zoom reset after changing text.
+
+### 2.7.1 - 2026-06-23
+- Added **Mermaid Sync Review List** — sidebar listing all bot-updated diagrams with **M** / **A** / **R** badges, per-file accept/reject/close, and bulk **Accept All**, **Reject All**, **Close Review**, and **Open Changes** (login required for bulk actions).
+
+### 2.7.0 - 2026-06-16
+- Added **Improve Diagram** — CodeLens commands at the top of .mmd / .mermaid files (**Preview Diagram**, **Save Diagram to Mermaid Chart**, **Repair Diagram**, **Improve Diagram**). 
+- **Improve Diagram** opens a sidebar view that generates two AI variants (layout/grouping and styling), with model selection, diff preview, and dual diagram previews before applying changes.
+- Updated diagram diff UI for review Mermaid sync command 
+
+### 2.6.9 - 2026-06-9 
+- Fixed an bug where Mermaid diagrams were not rendering correctly in Markdown files
+
+### 2.6.7 - 2026-05-29
+- Added **Generate Mermaid Diagram from Code** — This command appears at the bottom of supported code files, or you can directly use `@mermaid-chart /generate_diagram_from_code` to select files, choose a diagram type, and generate Mermaid diagrams using AI.
+- Added **Review Mermaid Sync** — Provides highlight, diff preview, accept, reject, and commit actions for .mmd/.mermaid files updated by the [Mermaid Diagram Sync GitHub App](https://github.com/marketplace/mermaid-diagram-sync); Also includes automatic detection after `git pull` and support for MermaidChart: Connect GitHub for Mermaid Diagram Sync for PR-aware reviews.
+- Added **Pre-commit Diagram Regeneration** —When source files linked to Mermaid diagrams are staged using git add, Mermaid Chart prompts you to regenerate affected diagrams with AI before committing. This can be disabled via Settings → **Mermaid Chart: Pre Commit Sync Enabled**
+
+### 2.6.6 - 2026-05-5
+- remove the login pop-up 
+
+### 2.6.5 - 2026-04-29
+- Enhanced VS Code theme integration with automatic preview panel UI synchronization
+
+### 2.6.4 - 2026-04-16
+- Added **Diagram Diff Highlighting** for Remote Sync and Regenerate Diagram features. it's Enhanced dual preview mode with precise highlighting for both flowchart and sequence diagrams
+
+### 2.6.3 - 2026-04-09
+- Enhanced diagram management with comprehensive right-click context menu
+- Moved Link Diagram functionality from hover to right-click menu for better accessibility
+- Removed "Use Diagram" option for simplified workflow
+- Consolidated all diagram operations (Link, View, Edit in Mermaid Chart, Edit Locally) into right-click context menu
+- Added Duplicate diagram, Delete diagram, Rename diagram option to context menu 
+- Added project-level add diagram button (+) for quick diagram creation
+
+### 2.6.2 - 2026-03-27
+- Added privacy policy and data collection documentation detailing user data usage and analytics practices 
+
 ### 2.6.0 - 2026-03-09
 - Updated preview panel design and it also dynamically adapt to both diagram themes and VS Code themes for better visual consistency.
 - Added copy PNG and SVG functionality directly within the export modal, allowing users to copy diagrams to clipboard without downloading.

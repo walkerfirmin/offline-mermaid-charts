@@ -3,7 +3,7 @@
   "publisher": "MermaidChart",
   "displayName": "Mermaid",
   "description": "The official Mermaid Editor plugin by the Mermaid open source team, now with AI-powered diagramming! Create, edit and preview diagrams seamlessly within VS Code",
-  "version": "2.6.0",
+  "version": "2.7.2",
   "icon": "images/mermaid-chart.png",
   "repository": "github:Mermaid-Chart/vscode-mermaid-chart",
   "engines": {
@@ -39,7 +39,8 @@
   ],
   "capabilities": {
     "authentication": [
-      "mermaidChartAuthProvider"
+      "mermaidChartAuthProvider",
+      "github"
     ]
   },
   "activationEvents": [
@@ -662,6 +663,16 @@
           "type": "boolean",
           "default": "false",
           "description": "Automatic name suggestion for exported diagrams"
+        },
+        "mermaidChart.preCommitSync.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable pre-commit Mermaid diagram sync. When enabled, you will be notified to regenerate diagrams when staged source files match diagram references."
+        },
+        "mermaidChart.showGenerateDiagramCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show 'Generate Mermaid Diagram' and 'Open Chat @mermaid-chart' CodeLens at the bottom of supported code files"
         }
       }
     },
@@ -678,7 +689,7 @@
       "mermaidActivityBar": [
         {
           "id": "mermaidChart",
-          "name": "",
+          "name": "Mermaid Chart",
           "contextualOnly": true,
           "when": "mermaid.showChart"
         },
@@ -688,6 +699,16 @@
           "type": "webview",
           "contextualOnly": true,
           "when": "mermaid.showWebview"
+        },
+        {
+          "id": "mermaidImproveDiagram",
+          "name": "Improve diagram",
+          "type": "webview"
+        },
+        {
+          "id": "mermaidReviewSync",
+          "name": "Review Mermaid Sync",
+          "when": "mermaid.hasAppReviewSync"
         }
       ]
     },
@@ -707,18 +728,68 @@
           "command": "mermaidChart.diagramHelp",
           "when": "view == mermaidWebview",
           "group": "navigation"
+        },
+        {
+          "command": "mermaidChart.reviewSyncOpenChanges",
+          "when": "view == mermaidReviewSync",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mermaidChart.reviewSyncRejectAll",
+          "when": "view == mermaidReviewSync",
+          "group": "navigation@2"
+        },
+        {
+          "command": "mermaidChart.reviewSyncAcceptAll",
+          "when": "view == mermaidReviewSync",
+          "group": "navigation@3"
+        },
+        {
+          "command": "mermaidChart.reviewSyncCloseAll",
+          "when": "view == mermaidReviewSync",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
         {
-          "command": "mermaidChart.insertUuidIntoEditor",
-          "when": "viewItem == document",
-          "group": "inline@01"
+          "command": "mermaidChart.appReviewAccept",
+          "when": "view == mermaidReviewSync && viewItem == mermaidReviewSyncFile",
+          "group": "inline@1"
         },
         {
-          "command": "mermaidChart.useDiagram",
+          "command": "mermaidChart.appReviewReject",
+          "when": "view == mermaidReviewSync && viewItem == mermaidReviewSyncFile",
+          "group": "inline@2"
+        },
+        {
+          "command": "mermaidChart.closeAppReview",
+          "when": "view == mermaidReviewSync && viewItem == mermaidReviewSyncFile",
+          "group": "inline@3"
+        },
+        {
+          "command": "mermaidChart.insertUuidIntoEditor",
           "when": "viewItem == document",
-          "group": "inline@02"
+          "group": "link@01"
+        },
+        {
+          "command": "mermaidChart.viewDiagram",
+          "when": "viewItem == document",
+          "group": "link@02"
+        },
+        {
+          "command": "mermaidChart.editDiagramInMermaidChart",
+          "when": "viewItem == document",
+          "group": "link@03"
+        },
+        {
+          "command": "mermaidChart.editDiagramLocally",
+          "when": "viewItem == document",
+          "group": "link@04"
+        },
+        {
+          "command": "mermaidChart.addDiagram",
+          "when": "viewItem == project",
+          "group": "inline@01"
         },
         {
           "command": "mermaidChart.renameDiagram",
@@ -729,6 +800,28 @@
           "command": "mermaidChart.deleteDiagram",
           "when": "viewItem == document",
           "group": "manage@02"
+        },
+        {
+          "command": "mermaidChart.duplicateDiagram",
+          "when": "viewItem == document",
+          "group": "manage@03"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "mermaidChart.appReviewAccept",
+          "when": "scmProvider == mermaidSyncReview",
+          "group": "inline@1"
+        },
+        {
+          "command": "mermaidChart.appReviewReject",
+          "when": "scmProvider == mermaidSyncReview",
+          "group": "inline@2"
+        },
+        {
+          "command": "mermaidChart.closeAppReview",
+          "when": "scmProvider == mermaidSyncReview",
+          "group": "inline@3"
         }
       ],
       "editor/context": [
@@ -739,8 +832,13 @@
         },
         {
           "command": "mermaidChart.connectDiagramToMermaidChart",
-          "when": "resourceExtname =~ /^\\.(mmd|mermaid)$/ || resourceLangId =~ /^mermaid/",
+          "when": "(resourceExtname =~ /^\\.(mmd|mermaid)$/ || resourceLangId =~ /^mermaid/) && !mermaid.hasId",
           "group": "navigation"
+        },
+        {
+          "command": "mermaidChart.reviewAppCommits",
+          "when": "resourceExtname =~ /^\\.(mmd|mermaid)$/",
+          "group": "appReview"
         }
       ]
     },
@@ -772,8 +870,16 @@
         "title": "Link diagram"
       },
       {
-        "command": "mermaidChart.useDiagram",
-        "title": "Use diagram"
+        "command": "mermaidChart.viewDiagram",
+        "title": "View diagram"
+      },
+      {
+        "command": "mermaidChart.editDiagramInMermaidChart",
+        "title": "Edit in Mermaid Chart"
+      },
+      {
+        "command": "mermaidChart.editDiagramLocally",
+        "title": "Edit locally"
       },
       {
         "command": "mermaidChart.syncDiagramWithMermaid",
@@ -782,6 +888,16 @@
       {
         "command": "mermaidChart.preview",
         "title": "MermaidChart: Preview Diagram"
+      },
+      {
+        "command": "mermaidChart.improveDiagram",
+        "title": "MermaidChart: Improve Diagram",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "mermaidChart.repairDiagram",
+        "title": "MermaidChart: Repair Diagram",
+        "icon": "$(wrench)"
       },
       {
         "command": "mermaidChart.logout",
@@ -809,9 +925,19 @@
         "title": "MermaidChart: Connect Diagram"
       },
       {
+        "command": "mermaidChart.addDiagram",
+        "title": "Add Diagram",
+        "icon": "$(add)"
+      },
+      {
         "command": "mermaidChart.renameDiagram",
         "title": "Rename",
         "icon": "$(edit)"
+      },
+      {
+        "command": "mermaidChart.duplicateDiagram",
+        "title": "Duplicate",
+        "icon": "$(copy)"
       },
       {
         "command": "mermaidChart.deleteDiagram",
@@ -839,8 +965,91 @@
         "title": "MermaidChart: Generate Docker Diagram"
       },
       {
+        "command": "mermaidChart.generateDiagramFromCode",
+        "title": "MermaidChart: Generate Diagram from Code"
+      },
+      {
         "command": "mermaidChart.openDiagramDiffWebviews",
         "title": "MermaidChart: Open Diagram Diff (Current vs Updated)"
+      },
+      {
+        "command": "mermaidChart.regenerateDiagramWithMermaidAI",
+        "title": "MermaidChart: Regenerate with Mermaid AI"
+      },
+      {
+        "command": "mermaidChart.reviewAppCommits",
+        "title": "MermaidChart: Review Mermaid Sync"
+      },
+      {
+        "command": "mermaidChart.reviewSyncOpenChanges",
+        "title": "Open Changes",
+        "icon": "$(diff-multiple)"
+      },
+      {
+        "command": "mermaidChart.reviewSyncAcceptAll",
+        "title": "Accept All Changes",
+        "icon": "$(add)"
+      },
+      {
+        "command": "mermaidChart.reviewSyncRejectAll",
+        "title": "Reject All Changes",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "mermaidChart.reviewSyncCloseAll",
+        "title": "Close Review",
+        "icon": "$(close)"
+      },
+      {
+        "command": "mermaidChart.showAppSyncInfo",
+        "title": "MermaidChart: Show App Sync Info"
+      },
+      {
+        "command": "mermaidChart.showAppReviewStatus",
+        "title": "MermaidChart: Show App Review Status"
+      },
+      {
+        "command": "mermaidChart.commitAppReview",
+        "title": "MermaidChart: Commit App Review"
+      },
+      {
+        "command": "mermaidChart.acceptModifiedChanges",
+        "title": "MermaidChart: Accept Modified App Review"
+      },
+      {
+        "command": "mermaidChart.appReviewBackToPending",
+        "title": "MermaidChart: App Review — Back to Pending (restore app proposal)"
+      },
+      {
+        "command": "mermaidChart.closeAppReview",
+        "title": "Close Review",
+        "icon": "$(close)"
+      },
+      {
+        "command": "mermaidChart.openAppReview",
+        "title": "MermaidChart: Open App Review"
+      },
+      {
+        "command": "mermaidChart.openReviewFileDiff",
+        "title": "MermaidChart: Open Review File Diff"
+      },
+      {
+        "command": "mermaidChart.appReviewAccept",
+        "title": "Accept",
+        "icon": "$(add)"
+      },
+      {
+        "command": "mermaidChart.appReviewReject",
+        "title": "Reject",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "mermaidChart.connectGitHub",
+        "title": "MermaidChart: Connect GitHub for Mermaid Diagram Sync"
+      },
+      {
+        "command": "mermaidChart.disconnectGitHub",
+        "title": "MermaidChart: Disconnect GitHub for Mermaid Diagram Sync"
       }
     ],
     "chatParticipants": [
@@ -874,6 +1083,10 @@
           {
             "name": "generate_dependency_diagram",
             "description": "Generate dependency security visualization diagram"
+          },
+          {
+            "name": "generate_diagram_from_code",
+            "description": "Generate Mermaid diagram from code file analysis"
           },
           {
             "name": "generate_c4_topdown_architecture",
@@ -1014,7 +1227,7 @@
   },
   "scripts": {
     "vscode:prepublish": "pnpm compile",
-    "precompile": "pnpm --filter ./webview build && webpack --mode=production --config ./build/markdownPreview.webpack.config.js",
+    "precompile": "pnpm --filter ./webview build && webpack --mode=production --config ./build/markdownPreview.webpack.config.js && webpack --mode=production --config ./build/sidebarMermaid.webpack.config.js",
     "compile": "tsc -p ./ --noEmit && esbuild ./src/extension.ts --sourcemap --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --minify",
     "watch": "tsc -p ./ --noEmit --watch",
     "pretest": "pnpm compile && pnpm lint",
@@ -1058,6 +1271,7 @@
     "@mermaidchart/sdk": "0.2.3",
     "@vscode/chat-extension-utils": "^0.0.0-alpha.1",
     "@vscode/prompt-tsx": "^0.3.0-alpha.12",
+    "@octokit/rest": "^22.0.0",
     "axios": "^1.7.9",
     "markdown-it": "^14.1.0",
     "mermaid": "^11.13.0",
@@ -1067,6 +1281,7 @@
   },
   "packageManager": "pnpm@9.7.1+sha512.faf344af2d6ca65c4c5c8c2224ea77a81a5e8859cbc4e06b1511ddce2f0151512431dd19e6aff31f2c6a8f5f2aced9bd2273e1fed7dd4de1868984059d2c4247",
   "enabledApiProposals": [
-    "languageModelToolsForAgent"
+    "languageModelToolsForAgent",
+    "scmProviderOptions"
   ]
 }

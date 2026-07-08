@@ -116,13 +116,13 @@ Trigger suggestions (e.g. after `m`) for snippets; use diagram help to open offi
 
 ## Commands (representative)
 
-| Command | Description |
-|--------|-------------|
-| **MermaidChart: Create Diagram** | Create a new diagram in the editor. |
-| **MermaidChart: Preview Diagram** | Open a preview for the current diagram. |
-| **MermaidChart: Login** | *Stubbed in this fork* — no cloud login. |
-| **MermaidChart: Logout** | Clears local session state if applicable. |
-| **MermaidChart: Sync Diagram** | *No cloud sync* in this fork. |
+| Command                           | Description                               |
+| --------------------------------- | ----------------------------------------- |
+| **MermaidChart: Create Diagram**  | Create a new diagram in the editor.       |
+| **MermaidChart: Preview Diagram** | Open a preview for the current diagram.   |
+| **MermaidChart: Login**           | *Stubbed in this fork* — no cloud login.  |
+| **MermaidChart: Logout**          | Clears local session state if applicable. |
+| **MermaidChart: Sync Diagram**    | *No cloud sync* in this fork.             |
 
 Use the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) to run commands; exact IDs are defined in `package.json`.
 
@@ -132,22 +132,22 @@ Use the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) to run commands; exact 
 
 Relevant settings include:
 
-| Setting | Purpose |
-|--------|---------|
-| `mermaidChart.baseUrl` | Unused for offline use; upstream pointed at `https://mermaid.ai/`. |
-| `mermaid.vscode.dark` / `mermaid.vscode.light` | Default Mermaid themes for dark/light VS Code themes. |
-| `mermaid.vscode.maxZoom` | Maximum preview zoom. |
-| `mermaid.vscode.maxCharLength` | Text size limit for diagrams. |
-| `mermaid.vscode.maxEdges` | Maximum edge count for diagrams. |
-| `mermaid.vscode.aiExportName` | May be ignored when Copilot naming is unavailable. |
+| Setting                                        | Purpose                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------ |
+| `mermaidChart.baseUrl`                         | Unused for offline use; upstream pointed at `https://mermaid.ai/`. |
+| `mermaid.vscode.dark` / `mermaid.vscode.light` | Default Mermaid themes for dark/light VS Code themes.              |
+| `mermaid.vscode.maxZoom`                       | Maximum preview zoom.                                              |
+| `mermaid.vscode.maxCharLength`                 | Text size limit for diagrams.                                      |
+| `mermaid.vscode.maxEdges`                      | Maximum edge count for diagrams.                                   |
+| `mermaid.vscode.aiExportName`                  | May be ignored when Copilot naming is unavailable.                 |
 
 ---
 
 ## Building & packaging
 
-| Script | Action |
-|--------|--------|
-| `pnpm compile` | Build webview, markdown preview bundle, and extension output. |
+| Script             | Action                                                                     |
+| ------------------ | -------------------------------------------------------------------------- |
+| `pnpm compile`     | Build webview, markdown preview bundle, and extension output.              |
 | `pnpm run package` | Produce a `.vsix` via `@vscode/vsce` (runs `vscode:prepublish` → compile). |
 
 ---

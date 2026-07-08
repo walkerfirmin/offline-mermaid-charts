@@ -2,40 +2,29 @@
   import ThemeIcon from "./ThemeIcon.svelte";
   import { createEventDispatcher, onDestroy } from 'svelte';
 
-  export let iconBackgroundColor, shadowColor, sidebarBackgroundColor, svgColor;
+  export let svgColor;
   export let currentTheme;
+  export let vscodeThemeColors;
 
   const dispatch = createEventDispatcher();
 
-  // Theme-aware icon colors
-  $: isDarkTheme = sidebarBackgroundColor === "#4d4d4d";
-  $: iconFillColor = isDarkTheme ? "#ffffff" : "#333333";
-  
-  // Diagram theme-aware dropdown colors
-  $: isDarkDiagramTheme = currentTheme?.includes('dark') || currentTheme === 'dark';
-  $: dropdownBg = isDarkDiagramTheme ? "#1e1e1e" : "#ffffff";
-  $: dropdownBorder = isDarkDiagramTheme ? "#464647" : "#e1e5e9";
-  $: dropdownTextColor = isDarkDiagramTheme ? "#cccccc" : "#333333";
-  $: dropdownHoverBg = isDarkDiagramTheme ? "#2A2D2E" : "#f0f0f0";
-  $: dropdownSelectedBg = isDarkDiagramTheme ? "#04395e" : "#0078d4";
-  $: dropdownSelectedText = "#ffffff";
+  $: isDarkDiagram = currentTheme?.includes('dark') || currentTheme === 'dark';
+  $: iconFillColor = svgColor;
+
+  // Always use the actual vscodeThemeColors surfaces. Adapt text color based on whether
+  // the VS Code theme itself is dark (isDark=true → light text, isDark=false → dark text).
+  $: dropdownBg = isDarkDiagram ? vscodeThemeColors.modalBackground : '#ffffff';
+  $: dropdownBorder = isDarkDiagram ? vscodeThemeColors.secondaryBackground : '#c8c8c8';
+  $: dropdownTextColor = isDarkDiagram ? (vscodeThemeColors.isDark ? '#cccccc' : '#333333') : '#333333';
+  $: dropdownHoverBg = isDarkDiagram ? vscodeThemeColors.secondaryBackground : '#e8e8e8';
+  $: dropdownSelectedBg = isDarkDiagram ? vscodeThemeColors.accentColor : '#0060C0';
+  $: dropdownSelectedText = isDarkDiagram ? (vscodeThemeColors.isDark ? '#ffffff' : '#333333') : '#ffffff';
 
   let isDropdownOpen = false;
   
-  // Available themes (excluding null and mc)
-  const themes = [
-    { key: 'mc', name: 'Mermaid Chart' },
-    { key: 'neo', name: 'Neo' },
-    { key: 'neo-dark', name: 'Neo Dark' },
-    { key: 'default', name: 'Default' },
-    { key: 'forest', name: 'Forest' },
-    { key: 'base', name: 'Base' },
-    { key: 'dark', name: 'Dark' },
-    { key: 'neutral', name: 'Neutral' },
-    { key: 'redux-dark', name: 'Redux Dark' },
-    { key: 'redux-color', name: 'Redux Color' },
-    { key: 'redux-dark-color', name: 'Redux Dark Color' },
-  ];
+  import { MERMAID_PREVIEW_THEMES } from './themes/previewThemes';
+
+  const themes = MERMAID_PREVIEW_THEMES;
 
   function toggleDropdown() {
     isDropdownOpen = !isDropdownOpen;
@@ -114,6 +103,7 @@
     z-index: 1000;
     box-shadow: 0px 4px 14px 0px #00000024;
     margin-top: 4px;
+    overflow: hidden;
   }
 
   .dropdown-title {
@@ -163,7 +153,7 @@
   }
 </style>
 
-<div class="theme-container {isDarkTheme ? 'dark' : 'light'}">
+<div class="theme-container {isDarkDiagram ? 'dark' : 'light'}">
   <button 
     class="icon {isDropdownOpen ? 'active' : ''}" 
     on:click={toggleDropdown} 
